@@ -44,6 +44,27 @@ class Processor{
 
     IF_ID_reg if_id;
 
+    struct ID_EX_reg {
+        uint32_t opcode, funct3, funct7;
+        uint32_t rs1, rs2, rd;
+        int32_t imm;
+        char inst_type;
+    } id_ex;
+
+    struct EX_MEM_reg {
+        int32_t alu_result;
+        uint32_t rd;
+        int32_t rs2_value;
+        uint32_t opcode, funct3;
+        bool memRead, memWrite, regWrite;
+    } ex_mem;
+
+    struct MEM_WB_reg {
+        int32_t result;
+        uint32_t rd;
+        bool regWrite;
+    } mem_wb;
+
     // storing binary instruction and pc (for beq type inst.s)
     void IF(IF_ID_reg &if_id, int cur_pc, vector<string>&bin_inst){
         if_id.out = bin_inst[cur_pc - 1]; // storing the output of the IF_ID pipeline as the binary string
@@ -157,19 +178,71 @@ void ID(IF_ID_reg &if_id) {
         jtype.opcode = binToUint(opcode);
     }
 }
-void EX(){
-    if(inst_type == 'R'){
-        auto reg = r_type_ID_EX_reg;
-        
+void EX() {
+        int32_t rs1_val = reg_set[id_ex.rs1];
+        int32_t rs2_val = reg_set[id_ex.rs2];
+
+        ex_mem.opcode = id_ex.opcode;
+        ex_mem.funct3 = id_ex.funct3;
+        ex_mem.rd = id_ex.rd;
+        ex_mem.rs2_value = rs2_val;
+        ex_mem.regWrite = false;
+        ex_mem.memRead = false;
+        ex_mem.memWrite = false;
+
+        if (id_ex.inst_type == 'R') {
+            if (id_ex.funct3 == 0b000 && id_ex.funct7 == 0b0000000) { // ADD
+                ex_mem.alu_result = rs1_val + rs2_val;
+                ex_mem.regWrite = true;
+            } else if (id_ex.funct3 == 0b000 && id_ex.funct7 == 0b0100000) { // SUB
+                ex_mem.alu_result = rs1_val - rs2_val;
+                ex_mem.regWrite = true;
+            }
+        } else if (id_ex.inst_type == 'I') {
+            if (id_ex.opcode == 0b0010011) { // ADDI
+                ex_mem.alu_result = rs1_val + id_ex.imm;
+                ex_mem.regWrite = true;
+            } else if (id_ex.opcode == 0b0000011) { // LOAD
+                ex_mem.alu_result = rs1_val + id_ex.imm;
+                ex_mem.memRead = true;
+                ex_mem.regWrite = true;
+            }
+        } else if (id_ex.inst_type == 'S') { // STORE
+            ex_mem.alu_result = rs1_val + id_ex.imm;
+            ex_mem.memWrite = true;
+        }
     }
-    else if(inst_type == 'I')auto temp = i_type_ID_EX_reg;
-    else if(inst_type == 'S')auto temp = stype;
-    else if(inst_type == 'U')auto temp = u_type_ID_EX_reg;
-    else if(inst_type == 'B')auto temp = btype;
-    else auto temp = jtype;
 
+    void MEM() {
+        mem_wb.rd = ex_mem.rd;
+        mem_wb.regWrite = ex_mem.regWrite;
 
-}
+        if (ex_mem.memRead) {
+            mem_wb.result = memory[ex_mem.alu_result]; // Load
+        } else if (ex_mem.memWrite) {
+            memory[ex_mem.alu_result] = ex_mem.rs2_value; // Store
+        } else {
+            mem_wb.result = ex_mem.alu_result; // ALU Result
+        }
+    }
+
+    void WB() {
+        if (mem_wb.regWrite && mem_wb.rd != 0) {
+            reg_set[mem_wb.rd] = mem_wb.result; // Write back to register
+        }
+    }
+};
+
+public:
+    void run(vector<string> &bin_inst) {
+        while (pc < bin_inst.size()) {
+            IF(bin_inst);
+            ID();
+            EX();
+            MEM();
+            WB();
+        }
+    }
 };
 
 int main(){
@@ -200,6 +273,12 @@ int main(){
         binary_mc[i] = oss.str();
         i++;
     }
+
+    Processor cpu;
+    cpu.run(binary_mc);
+
+    return 0;
+    
     for(auto &l : binary_mc[i]){
         // pass to processer for processing each instruction
     }
