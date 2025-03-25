@@ -40,13 +40,12 @@ class Processor {
     int pc;  // program counter
     int32_t reg_set[32];  // register file: 32 registers (x0 - x31)
     
-    // Pipeline register: IF/ID
+    // Pipeline registers
     struct IF_ID_reg {
         int cur_pc;
         string out;
     } if_id;
     
-    // Pipeline register: ID/EX
     struct ID_EX_reg {
         uint32_t opcode, funct3, funct7;
         uint32_t rs1, rs2, rd;
@@ -54,7 +53,6 @@ class Processor {
         char inst_type;
     } id_ex;
     
-    // Pipeline register: EX/MEM
     struct EX_MEM_reg {
         int32_t alu_result;
         uint32_t rd;
@@ -63,7 +61,6 @@ class Processor {
         bool memRead, memWrite, regWrite;
     } ex_mem;
     
-    // Pipeline register: MEM/WB (not used here, but defined for completeness)
     struct MEM_WB_reg {
         int32_t result;
         uint32_t rd;
@@ -77,28 +74,23 @@ public:
             reg_set[i] = 0;
     }
     
-    // IF stage: fetch the instruction (binary string) from vector of instructions.
-    void IF(int cur_pc, vector<string>& bin_inst) {
-        // saying cur_pc should be less than the number of binary instructions ka last 
-        if (cur_pc >= bin_inst.size()) {  // Fix indexing
-            cerr << "IF ERROR: PC out of range! PC = " << cur_pc << endl;
+    void IF(vector<string>& bin_inst) {
+        if (pc >= bin_inst.size()) {
+            cerr << "IF ERROR: PC out of range! PC = " << pc << endl;
             return;
         }
-        if_id.out = bin_inst[cur_pc];
-        if_id.cur_pc = cur_pc;
+        if_id.out = bin_inst[pc];
+        if_id.cur_pc = pc;
         cout << "Fetched Instruction: " << if_id.out << endl;
     }
     
-    
-    // ID stage: decode the binary instruction into its fields.
     void ID() {
-        if (if_id.out.length() != 32) {
-            cerr << "ERROR: Instruction size not 32\n";
+        if (if_id.out.length() < 32) {
+            cerr << "ERROR: Instruction too short!\n";
             return;
         }
     
         string opcodeStr = if_id.out.substr(if_id.out.size() - 7, 7);
-        cout<<"String of opcodeStr = "<<opcodeStr<<'\n';
         uint32_t opcode = binToUint(opcodeStr);
         id_ex.opcode = opcode;
     
@@ -112,17 +104,38 @@ public:
             id_ex.rd     = binToUint(if_id.out.substr(20, 5));
             id_ex.funct3 = binToUint(if_id.out.substr(17, 3));
             id_ex.funct7 = binToUint(if_id.out.substr(0, 7));
+            id_ex.imm = 0; // R-type has no immediate
+        } else if (opcode == 0b0000011 || opcode == 0b0010011) { // I-type
+            id_ex.inst_type = 'I';
+            id_ex.rs1    = binToUint(if_id.out.substr(12, 5));
+            id_ex.rd     = binToUint(if_id.out.substr(20, 5));
+            id_ex.funct3 = binToUint(if_id.out.substr(17, 3));
+            id_ex.imm     = signExtend32(binToUint(if_id.out.substr(0, 12)), 12);
+        } else if (opcode == 0b0100011) { // S-type
+            id_ex.inst_type = 'S';
+            id_ex.rs1    = binToUint(if_id.out.substr(12, 5));
+            id_ex.rs2    = binToUint(if_id.out.substr(7, 5));
+            id_ex.imm     = signExtend32(binToUint(if_id.out.substr(0, 7) + if_id.out.substr(25, 5)), 12);
+            id_ex.rd = 0; // S-type has no rd
+        } else if (opcode == 0b1100011) { // B-type
+            id_ex.inst_type = 'B';
+            id_ex.rs1    = binToUint(if_id.out.substr(12, 5));
+            id_ex.rs2    = binToUint(if_id.out.substr(7, 5));
+            id_ex.imm     = signExtend32(binToUint(if_id.out.substr(0, 1) + if_id.out.substr(24, 6) + if_id.out.substr(1, 6)), 13);
+            id_ex.rd = 0; // B-type has no rd
+        } else {
+            cerr << "Unknown instruction type!\n";
+            return;
         }
+    
         cout << "ID: Opcode = " << id_ex.opcode << ", rs1 = " << id_ex.rs1 
              << ", rs2 = " << id_ex.rs2 << ", rd = " << id_ex.rd 
              << ", imm = " << id_ex.imm << endl;
     }
     
-        
-    // EX stage: Execute the instruction using ALU operations.
-    /* void EX() {
+    void EX() {
         int32_t rs1_val = reg_set[id_ex.rs1];
-        int32_t rs2_val = reg_set[id_ex.rs2];
+        int32_t rs2_val = (id_ex.inst_type == 'R' || id_ex.inst_type == 'I') ? reg_set[id_ex.rs2] : 0;
         ex_mem.opcode = id_ex.opcode;
         ex_mem.funct3 = id_ex.funct3;
         ex_mem.rd = id_ex.rd;
@@ -130,7 +143,7 @@ public:
         ex_mem.regWrite = false;
         ex_mem.memRead = false;
         ex_mem.memWrite = false;
-    
+
         if (id_ex.inst_type == 'R') {
             switch (id_ex.funct3) {
                 case 0b000: // ADD / SUB
@@ -201,32 +214,29 @@ public:
                     break;
             }
             if (takeBranch) {
-                // For branch, update pc accordingly.
-                pc += id_ex.imm;
+                pc += id_ex.imm; // Update PC for branch
             }
         }
     }
     
-    // For this simplified example, we skip the MEM and WB stages.
-    */
     void run(vector<string>& bin_inst) {
         while (pc < bin_inst.size()) {
             cout << "\nCycle: " << pc + 1 << endl;
-    
-            IF(pc, bin_inst);
-            if (if_id.out.empty() || if_id.out.length() < 32) {  // Check if valid
-                cerr << "Skipping cycle: Invalid instruction fetched.\n";
-                pc++;
-                continue;
-            }
-    
+
+            // Execute the pipeline stages
+            EX();
             ID();
-            // EX();
-    
+            IF(bin_inst);
+            
+            // Update the pipeline registers
+            // Move ID to EX
+            id_ex = {};
+            // Move IF to ID
+            if_id = {};
+            
             pc++;  // Increment PC
         }
     }
-    
 };
 
 int main(){
@@ -255,7 +265,6 @@ int main(){
         cout << "Instruction " << i << ": " << lines[i] << " -> " << binary_mc[i] << endl;
     }
     
-
     Processor proc;
     proc.run(binary_mc);
     return 0;
