@@ -1,6 +1,6 @@
 #include <bits/stdc++.h>
 #include <fstream>
-# include "parser.h"
+#include <iomanip> // Include this for setw()
 
 using namespace std;
 vector<uint32_t> dmem(1000, 0);
@@ -486,7 +486,6 @@ int main() {
     }
     // Read machine code lines
 
-
     // Convert hex to 32-bit binary
     vector<string> binary_mc(lines.size());
     for (size_t i = 0; i < lines.size(); ++i) {
@@ -506,62 +505,74 @@ int main() {
     bool     prevRegWrite = false;
 
     // Simulate each instruction in a naive pipeline manner
-    for (size_t pc = 1; pc <= binary_mc.size(); ++pc) { // limit might be something different
-        cout << risc_inst[pc - 1] << " ;" ;
-
-        // 1) IF
-        ans = "";
-        for(int i = 0;i<spaces; i++)cout<<" ;";
-        ans += "IF ;";
+    vector<vector<int>>ans(risc_inst.size(),vector<int>(20,0)); // 0 -> " ", 1 -> "IF", 2 -> ID, 3 -> EX , 4-> MEM , 5-> WB
+    int next_sp = 0;
+    for (size_t pc = 1; pc <= binary_mc.size(); ++pc) {
+        spaces = next_sp;
+    
+        // 1) Instruction Fetch (IF)
+        ans[pc - 1][spaces] = 1;
+        spaces++;
+    
         Processor::IF_ID_reg if_id_reg;
         processor.IF(if_id_reg, pc, binary_mc);
-
-        // 2) ID
+    
+        // 2) Instruction Decode (ID)
         processor.ID(if_id_reg);
-        ans += "ID ;";
-        spaces += 1; /**** Here, actual number to be added is the number of stage of ID */
-        // Check for hazard with the previous instruction
-        bool stall = detectHazard(processor.currentRs1,
-                                  processor.currentRs2,
-                                  prevRd,
-                                  prevRegWrite);
-
-        // Print the pipeline stages for this instruction
-        // If stall == true, we insert one stall cycle after ID
-        // if (stall) {
-        //     ans += "- ;";  // stall 
-        // }
-
-        // Even though we show the stall in the text, we still run the stages below.
-        // (A real pipeline would shift them by one cycle.)
-
-        // 3) EX
+        next_sp = spaces;
+        ans[pc - 1][spaces] = 2;
+        spaces++;
+    
+        // 3) Hazard Detection
+        bool stall = detectHazard(processor.currentRs1, processor.currentRs2, prevRd, prevRegWrite);
+        
+        if (stall) {
+            ans[pc - 1][spaces] = 6; // Stall cycle
+            spaces++;
+        }
+    
+        // 4) Execute (EX) - Ensure it always runs!
         processor.EX();
-        // if (stall) {
-        //     ans += "- ;";  // stall 
-        // }
-        // else
-        ans += "EX ;";
-        // 4) MEM
+        ans[pc - 1][spaces] = 3;
+        spaces++;
+    
+        // 5) Memory Access (MEM) - Ensure it always runs!
         processor.MEM();
-        // if (stall) {
-        //     ans += "- ;";  // stall 
-        // }
-        // else
-        ans += "MEM ;";
-        // 5) WB
+        ans[pc - 1][spaces] = 4;
+        spaces++;
+    
+        // 6) Write Back (WB) - Ensure it always runs!
         processor.WB();
-        // if (stall) {
-        //     ans += "- ;";  // stall 
-        // }
-        // else
-        ans += "WB ;";
-
+        ans[pc - 1][spaces] = 5;
+        spaces++;
+    
         // Update previous instruction info
-        cout << ans <<'\n';
-        prevRd        = processor.ex_mem.rd;      // from EX stage register
-        prevRegWrite  = processor.ex_mem.regWrite;
+        prevRd = processor.ex_mem.rd;
+        prevRegWrite = processor.ex_mem.regWrite;
     }
+    
+    
+    // Print column headers
+    
+    cout << setw(15) << "Instruction"; 
+    
+for (size_t i = 1; i <= ans[0].size(); i++)
+    cout << setw(6) << i;
+cout << '\n';
 
+// Print pipeline stages
+for (size_t i = 0; i < ans.size(); i++) {
+    cout << setw(15) << risc_inst[i] << " |";
+    for (size_t j = 0; j < ans[0].size(); j++) {
+        if (ans[i][j] == 1) cout << setw(6) << "IF";
+        else if (ans[i][j] == 2) cout << setw(6) << "ID";
+        else if (ans[i][j] == 3) cout << setw(6) << "EX";
+        else if (ans[i][j] == 4) cout << setw(6) << "MEM";
+        else if (ans[i][j] == 5) cout << setw(6) << "WB";
+        else if (ans[i][j] == 6) cout << setw(6) << "-";
+        else cout << setw(6) << " ";
+    }
+    cout << '\n';
+}
     return 0;
 }
