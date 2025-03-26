@@ -1,7 +1,10 @@
 #include <bits/stdc++.h>
 #include <fstream>
-using namespace std;
 
+using namespace std;
+vector<uint32_t>dmem(1000,0);
+
+// Utility functions
 uint32_t binToUint(const std::string &binStr) {
     uint32_t value = 0;
     for (char c : binStr) {
@@ -28,244 +31,586 @@ string hex_to_bin(char c) {
         "1100", "1101", "1110", "1111"
     };
 
-    if (c >= '0' && c <= '9')
-        return lookup[c - '0'];
-    if (c >= 'a' && c <= 'f')
-        return lookup[c - 'a' + 10];
+    if (c >= '0' && c <= '9') return lookup[c - '0'];
+    if (c >= 'a' && c <= 'f') return lookup[c - 'a' + 10];
 
     return "Invalid";
 }
 
 class Processor {
-    int pc;  // program counter
-    int32_t reg_set[32];  // register file: 32 registers (x0 - x31)
+public:
+    int pc = 0; // program counter
+    vector<int32_t> reg_set; // set of 32 registers x0 - x31
     
-    // Pipeline registers
+    // Pipeline Stage Registers
     struct IF_ID_reg {
         int cur_pc;
         string out;
-    } if_id;
-    
-    struct ID_EX_reg {
-        uint32_t opcode, funct3, funct7;
-        uint32_t rs1, rs2, rd;
-        int32_t imm;
-        char inst_type;
-    } id_ex;
-    
-    struct EX_MEM_reg {
-        int32_t alu_result;
+    };
+
+    // Type-specific instruction structs
+    struct R_type_ID_EX_reg {
+        uint32_t funct7;
+        uint32_t rs2;
+        uint32_t rs1;
+        uint32_t funct3;
         uint32_t rd;
-        int32_t rs2_value;
-        uint32_t opcode, funct3;
-        bool memRead, memWrite, regWrite;
-    } ex_mem;
+        uint32_t opcode;
+        string op;
+    };
     
-    struct MEM_WB_reg {
-        int32_t result;
+    struct I_type_ID_EX_reg {
+        uint32_t imm;
+        uint32_t rs1;
+        uint32_t funct3;
         uint32_t rd;
-        bool regWrite;
-    } mem_wb;
+        uint32_t opcode;
+        string op;
+    };
     
+    struct S_type_ID_EX_reg {
+        uint32_t imm;
+        uint32_t rs2;
+        uint32_t rs1;
+        uint32_t funct3;
+        uint32_t opcode;
+        string op;
+    };
+    
+    struct U_type_ID_EX_reg {
+        uint32_t imm;
+        uint32_t rd;
+        uint32_t opcode;
+    };
+    
+    struct B_type_ID_EX_reg {
+        uint32_t imm;
+        uint32_t rs2;
+        uint32_t rs1;
+        uint32_t funct3;
+        uint32_t opcode;
+        string op;
+    };
+    
+    struct J_type_ID_EX_reg {
+        uint32_t imm;
+        uint32_t rd;
+        uint32_t opcode;
+    };
+
+    // Pipeline Stage Registers
+    IF_ID_reg if_id;
+    R_type_ID_EX_reg r_type_ID_EX_reg;
+    I_type_ID_EX_reg i_type_ID_EX_reg;
+    U_type_ID_EX_reg u_type_ID_EX_reg;
+    S_type_ID_EX_reg stype;
+    B_type_ID_EX_reg btype;
+    J_type_ID_EX_reg jtype;
+    
+    char inst_type;
+
 public:
-    Processor() {
-        pc = 0;
-        for (int i = 0; i < 32; i++)
-            reg_set[i] = 0;
+    // Constructor to initialize register set
+    Processor() : reg_set(32, 0) {
+        // cout << "Processor Initialized: 32 Registers Set to 0" << endl;
     }
-    
-    void IF(vector<string>& bin_inst) {
-        if (pc >= bin_inst.size()) {
-            cerr << "IF ERROR: PC out of range! PC = " << pc << endl;
-            return;
-        }
-        if_id.out = bin_inst[pc];
-        if_id.cur_pc = pc;
-        cout << "Fetched Instruction: " << if_id.out << endl;
-    }
-    
-    void ID() {
-        if (if_id.out.length() < 32) {
-            cerr << "ERROR: Instruction too short!\n";
-            return;
-        }
-    
-        string opcodeStr = if_id.out.substr(if_id.out.size() - 7, 7);
-        uint32_t opcode = binToUint(opcodeStr);
-        id_ex.opcode = opcode;
-    
-        cout << "Decoding: " << if_id.out << endl;
-        cout << "Opcode: " << opcode << endl;
-    
-        if (opcode == 0b0110011) { // R-type
-            id_ex.inst_type = 'R';
-            id_ex.rs1    = binToUint(if_id.out.substr(12, 5));
-            id_ex.rs2    = binToUint(if_id.out.substr(7, 5));
-            id_ex.rd     = binToUint(if_id.out.substr(20, 5));
-            id_ex.funct3 = binToUint(if_id.out.substr(17, 3));
-            id_ex.funct7 = binToUint(if_id.out.substr(0, 7));
-            id_ex.imm = 0; // R-type has no immediate
-        } else if (opcode == 0b0000011 || opcode == 0b0010011) { // I-type
-            id_ex.inst_type = 'I';
-            id_ex.rs1    = binToUint(if_id.out.substr(12, 5));
-            id_ex.rd     = binToUint(if_id.out.substr(20, 5));
-            id_ex.funct3 = binToUint(if_id.out.substr(17, 3));
-            id_ex.imm     = signExtend32(binToUint(if_id.out.substr(0, 12)), 12);
-        } else if (opcode == 0b0100011) { // S-type
-            id_ex.inst_type = 'S';
-            id_ex.rs1    = binToUint(if_id.out.substr(12, 5));
-            id_ex.rs2    = binToUint(if_id.out.substr(7, 5));
-            id_ex.imm     = signExtend32(binToUint(if_id.out.substr(0, 7) + if_id.out.substr(25, 5)), 12);
-            id_ex.rd = 0; // S-type has no rd
-        } else if (opcode == 0b1100011) { // B-type
-            id_ex.inst_type = 'B';
-            id_ex.rs1    = binToUint(if_id.out.substr(12, 5));
-            id_ex.rs2    = binToUint(if_id.out.substr(7, 5));
-            id_ex.imm     = signExtend32(binToUint(if_id.out.substr(0, 1) + if_id.out.substr(24, 6) + if_id.out.substr(1, 6)), 13);
-            id_ex.rd = 0; // B-type has no rd
+
+    // Instruction Fetch Stage
+    void IF(IF_ID_reg &if_id, int cur_pc, vector<string>& bin_inst) {
+        cout << "IF; ";
+        // cout << "\n===== Instruction Fetch (IF) Stage =====" << endl;
+        // cout << "Current Program Counter: " << cur_pc << endl;
+        
+        if (cur_pc > 0 && cur_pc <= bin_inst.size()) {
+            if_id.out = bin_inst[cur_pc - 1];
+            if_id.cur_pc = cur_pc;
+            
+            // cout << "Fetched Instruction (32-bit): " << if_id.out << endl;
         } else {
-            cerr << "Unknown instruction type!\n";
-            return;
-        }
-    
-        cout << "ID: Opcode = " << id_ex.opcode << ", rs1 = " << id_ex.rs1 
-             << ", rs2 = " << id_ex.rs2 << ", rd = " << id_ex.rd 
-             << ", imm = " << id_ex.imm << endl;
-    }
-    
-    void EX() {
-        int32_t rs1_val = reg_set[id_ex.rs1];
-        int32_t rs2_val = (id_ex.inst_type == 'R' || id_ex.inst_type == 'I') ? reg_set[id_ex.rs2] : 0;
-        ex_mem.opcode = id_ex.opcode;
-        ex_mem.funct3 = id_ex.funct3;
-        ex_mem.rd = id_ex.rd;
-        ex_mem.rs2_value = rs2_val;
-        ex_mem.regWrite = false;
-        ex_mem.memRead = false;
-        ex_mem.memWrite = false;
-
-        if (id_ex.inst_type == 'R') {
-            switch (id_ex.funct3) {
-                case 0b000: // ADD / SUB
-                    if (id_ex.funct7 == 0b0000000)
-                        ex_mem.alu_result = rs1_val + rs2_val; // ADD
-                    else if (id_ex.funct7 == 0b0100000)
-                        ex_mem.alu_result = rs1_val - rs2_val; // SUB
-                    ex_mem.regWrite = true;
-                    break;
-                case 0b111: // AND
-                    ex_mem.alu_result = rs1_val & rs2_val;
-                    ex_mem.regWrite = true;
-                    break;
-                case 0b110: // OR
-                    ex_mem.alu_result = rs1_val | rs2_val;
-                    ex_mem.regWrite = true;
-                    break;
-                case 0b100: // XOR
-                    ex_mem.alu_result = rs1_val ^ rs2_val;
-                    ex_mem.regWrite = true;
-                    break;
-                case 0b010: // SLT
-                    ex_mem.alu_result = (rs1_val < rs2_val) ? 1 : 0;
-                    ex_mem.regWrite = true;
-                    break;
-                default:
-                    cout << "Unknown R-type instruction\n";
-                    break;
-            }
-        } 
-        else if (id_ex.inst_type == 'I') {
-            switch (id_ex.opcode) {
-                case 0b0010011: // ADDI
-                    ex_mem.alu_result = rs1_val + id_ex.imm;
-                    ex_mem.regWrite = true;
-                    break;
-                case 0b0000011: // LOAD
-                    ex_mem.alu_result = rs1_val + id_ex.imm;
-                    ex_mem.memRead = true;
-                    ex_mem.regWrite = true;
-                    break;
-                default:
-                    cout << "Unknown I-type instruction\n";
-                    break;
-            }
-        } 
-        else if (id_ex.inst_type == 'S') {
-            ex_mem.alu_result = rs1_val + id_ex.imm;
-            ex_mem.memWrite = true;
-        } 
-        else if (id_ex.inst_type == 'B') {
-            bool takeBranch = false;
-            switch (id_ex.funct3) {
-                case 0b000: // BEQ
-                    takeBranch = (rs1_val == rs2_val);
-                    break;
-                case 0b001: // BNE
-                    takeBranch = (rs1_val != rs2_val);
-                    break;
-                case 0b100: // BLT
-                    takeBranch = (rs1_val < rs2_val);
-                    break;
-                case 0b101: // BGE
-                    takeBranch = (rs1_val >= rs2_val);
-                    break;
-                default:
-                    cout << "Unknown branch instruction\n";
-                    break;
-            }
-            if (takeBranch) {
-                pc += id_ex.imm; // Update PC for branch
-            }
+            cerr << "ERROR: Invalid Program Counter or Instruction Memory Access" << endl;
         }
     }
-    
-    void run(vector<string>& bin_inst) {
-        while (pc < bin_inst.size()) {
-            cout << "\nCycle: " << pc + 1 << endl;
 
-            // Execute the pipeline stages
-            EX();
-            ID();
-            IF(bin_inst);
+    // Instruction Decode Stage
+    void ID(IF_ID_reg &if_id) {
+        // cout << "\n===== Instruction Decode (ID) Stage =====" << endl;
+        cout << "ID ;";
+        
+        string opcode = if_id.out.substr(25, 7);
+        // cout << "Full Instruction: " << if_id.out << endl;
+        // cout << "Opcode: " << opcode << endl;
+
+        // Comprehensive instruction type decoding
+        if (opcode == "0110011") {
+            // R-type Instructions (Arithmetic and Logical)
+            inst_type = 'R';
+            r_type_ID_EX_reg.funct7 = binToUint(if_id.out.substr(0, 7));
+            r_type_ID_EX_reg.rs2 = binToUint(if_id.out.substr(7, 5));
+            r_type_ID_EX_reg.rs1 = binToUint(if_id.out.substr(12, 5));
+            r_type_ID_EX_reg.funct3 = binToUint(if_id.out.substr(17, 3));
+            r_type_ID_EX_reg.rd = binToUint(if_id.out.substr(20, 5));
+            r_type_ID_EX_reg.opcode = binToUint(opcode);
+            string* op = &r_type_ID_EX_reg.op;
             
-            // Update the pipeline registers
-            // Move ID to EX
-            id_ex = {};
-            // Move IF to ID
-            if_id = {};
+            if(r_type_ID_EX_reg.funct7 == 32 && r_type_ID_EX_reg.funct3 == 0)*op = "sub";
+            if(r_type_ID_EX_reg.funct7 == 0 && r_type_ID_EX_reg.funct3 == 0)*op = "add";
+            if(r_type_ID_EX_reg.funct7 == 0 && r_type_ID_EX_reg.funct3 == 1)*op = "sll";
+            if(r_type_ID_EX_reg.funct7 == 0 && r_type_ID_EX_reg.funct3 == 2)*op = "slt";
+            if(r_type_ID_EX_reg.funct7 == 0 && r_type_ID_EX_reg.funct3 == 3)*op = "sltu";
+            if(r_type_ID_EX_reg.funct7 == 0 && r_type_ID_EX_reg.funct3 == 4)*op = "xor";
+            if(r_type_ID_EX_reg.funct7 == 0 && r_type_ID_EX_reg.funct3 == 5)*op = "srl";
+            if(r_type_ID_EX_reg.funct7 == 32 && r_type_ID_EX_reg.funct3 == 5)*op = "sra";
+            if(r_type_ID_EX_reg.funct7 == 0 && r_type_ID_EX_reg.funct3 == 6)*op = "or";
+            if(r_type_ID_EX_reg.funct7 == 0 && r_type_ID_EX_reg.funct3 == 7)*op = "and";
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 0)*op = "mul";
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 1)*op = "mulh";
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 2)*op = "mulhsu";
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 3)*op = "mulhu";
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 4)*op = "div";
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 5)*op = "divu";
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 6)*op = "rem";
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 7)*op = "remu";
+
+            // cout << "R-type Instruction Detected" << endl;
+            // cout << "Operation Details:" << endl;
+            // cout << "  funct7: " << r_type_ID_EX_reg.funct7 << endl;
+            // cout << "  rs2 (Source Register 2): x" << r_type_ID_EX_reg.rs2 << endl;
+            // cout << "  rs1 (Source Register 1): x" << r_type_ID_EX_reg.rs1 << endl;
+            // cout << "  funct3: " << r_type_ID_EX_reg.funct3 << endl;
+            // cout << "  rd (Destination Register): x" << r_type_ID_EX_reg.rd << endl;
+            // cout << " op type: " << r_type_ID_EX_reg.op <<'\n';
+        }
+        else if (opcode == "0010011" || opcode == "0000011" || 
+                 opcode == "1100111" || opcode == "1110011") {
+            // I-type Instructions (Immediate, Load, JALR, System)
+            inst_type = 'I';
+            uint32_t rawImm = binToUint(if_id.out.substr(0, 12));
+            i_type_ID_EX_reg.imm = signExtend32(rawImm, 12);
+            i_type_ID_EX_reg.rs1 = binToUint(if_id.out.substr(12, 5));
+            i_type_ID_EX_reg.funct3 = binToUint(if_id.out.substr(17, 3));
+            i_type_ID_EX_reg.rd = binToUint(if_id.out.substr(20, 5));
+            i_type_ID_EX_reg.opcode = binToUint(opcode);
+            string* op = &i_type_ID_EX_reg.op;
+
+            if(i_type_ID_EX_reg.funct3 == 0)*op = "addi";
+            if(i_type_ID_EX_reg.funct3 == 1)*op = "slli";
+            if(i_type_ID_EX_reg.funct3 == 2)*op = "slti";
+            if(i_type_ID_EX_reg.funct3 == 3)*op = "sltiu";
+            if(i_type_ID_EX_reg.funct3 == 4)*op = "xori";
+            if(i_type_ID_EX_reg.funct3 == 5 && (i_type_ID_EX_reg.imm >> 10) == 0)*op = "srli";
+            if(i_type_ID_EX_reg.funct3 == 5 && (i_type_ID_EX_reg.imm >> 10) == 32)*op = "srai";
+            if(i_type_ID_EX_reg.funct3 == 6)*op = "ori";
+            if(i_type_ID_EX_reg.funct3 == 7)*op = "andi";
+
+
+            // cout << "I-type Instruction Detected" << endl;
+            // cout << "Operation Details:" << endl;
+            // cout << "  Immediate Value: " << i_type_ID_EX_reg.imm << endl;
+            // cout << "  rs1 (Source Register): x" << i_type_ID_EX_reg.rs1 << endl;
+            // cout << "  funct3: " << i_type_ID_EX_reg.funct3 << endl;
+            // cout << "  rd (Destination Register): x" << i_type_ID_EX_reg.rd << endl;
+            // cout << " op type: " << i_type_ID_EX_reg.op << '\n';
+        }
+        else if (opcode == "0100011") {
+            // S-type Instructions (Store)
+            inst_type = 'S';
+            uint32_t imm_part1 = binToUint(if_id.out.substr(0, 7));
+            uint32_t imm_part2 = binToUint(if_id.out.substr(20, 5));
+            uint32_t rawImm = (imm_part1 << 5) | imm_part2;
+            stype.imm = signExtend32(rawImm, 12);
+            stype.rs2 = binToUint(if_id.out.substr(7, 5));
+            stype.rs1 = binToUint(if_id.out.substr(12, 5));
+            stype.funct3 = binToUint(if_id.out.substr(17, 3));
+            stype.opcode = binToUint(opcode);
+
+            string* op = &stype.op;
+            if(stype.funct3 == 0)*op = "sb";
+            if(stype.funct3 == 1)*op = "sh";
+            if(stype.funct3 == 2)*op = "sw";
+
+
+            // cout << "S-type Instruction Detected" << endl;
+            // cout << "Operation Details:" << endl;
+            // cout << "  Immediate Value: " << stype.imm << endl;
+            // cout << "  rs2 (Source Register 2): x" << stype.rs2 << endl;
+            // cout << "  rs1 (Base Register): x" << stype.rs1 << endl;
+            // cout << "  funct3: " << stype.funct3 << endl;
+            // cout << " op code: " << stype.op << '\n';
+        }
+        else if (opcode == "0110111" || opcode == "0010111") {
+            // U-type Instructions (LUI, AUIPC)
+            inst_type = 'U';
+            u_type_ID_EX_reg.imm = binToUint(if_id.out.substr(0, 20));
+            u_type_ID_EX_reg.rd = binToUint(if_id.out.substr(20, 5));
+            u_type_ID_EX_reg.opcode = binToUint(opcode);
+
+            // cout << "U-type Instruction Detected" << endl;
+            // cout << "Operation Details:" << endl;
+            // cout << "  Immediate Value: " << u_type_ID_EX_reg.imm << endl;
+            // cout << "  rd (Destination Register): x" << u_type_ID_EX_reg.rd << endl;
+        }
+        else if (opcode == "1100011") {
+            // B-type Instructions (Branches)
+            inst_type = 'B';
+            uint32_t imm12 = binToUint(if_id.out.substr(0, 1));   // bit 12
+            uint32_t imm10_5 = binToUint(if_id.out.substr(1, 6)); // bits 10-5
+            uint32_t imm4_1 = binToUint(if_id.out.substr(20, 4)); // bits 4-1
+            uint32_t imm11 = binToUint(if_id.out.substr(24, 1));  // bit 11
             
-            pc++;  // Increment PC
+            uint32_t rawImm = (imm12 << 12) | (imm11 << 11) | (imm10_5 << 5) | (imm4_1 << 1);
+            btype.imm = signExtend32(rawImm, 13);
+            
+            btype.rs2 = binToUint(if_id.out.substr(7, 5));
+            btype.rs1 = binToUint(if_id.out.substr(12, 5));
+            btype.funct3 = binToUint(if_id.out.substr(17, 3));
+            btype.opcode = binToUint(opcode);
+
+            // cout << "B-type Instruction Detected" << endl;
+            // cout << "Operation Details:" << endl;
+            // cout << "  Immediate Value: " << btype.imm << endl;
+            // cout << "  rs2 (Compare Register): x" << btype.rs2 << endl;
+            // cout << "  rs1 (Compare Register): x" << btype.rs1 << endl;
+            // cout << "  funct3: " << btype.funct3 << endl;
+        }
+        else if (opcode == "1101111") {
+            // J-type Instructions (JAL)
+            inst_type = 'J';
+            uint32_t imm20 = binToUint(if_id.out.substr(0, 1));
+            uint32_t imm10_1 = binToUint(if_id.out.substr(1, 10));
+            uint32_t imm11 = binToUint(if_id.out.substr(11, 1));
+            uint32_t imm19_12 = binToUint(if_id.out.substr(12, 8));
+            uint32_t rawImm = (imm20 << 20) | (imm19_12 << 12) | (imm11 << 11) | (imm10_1 << 1);
+            jtype.imm = signExtend32(rawImm, 21);
+            jtype.rd = binToUint(if_id.out.substr(20, 5));
+            jtype.opcode = binToUint(opcode);
+
+            // cout << "J-type Instruction Detected" << endl;
+            // cout << "Operation Details:" << endl;
+            // cout << "  Immediate Value: " << jtype.imm << endl;
+            // cout << "  rd (Destination Register): x" << jtype.rd << endl;
+        }
+        else {
+            // cout << "ERROR: Unknown Instruction Type" << endl;
+            inst_type = 'X';
+        }
+    }
+
+    // Execute Stage
+    // Pipeline Stage Register for EX/MEM stage
+struct EX_MEM_reg {
+    uint32_t aluResult;  // Result of ALU computation
+    uint32_t rd;         // Destination register (if applicable)
+    uint32_t storeData;  // Data to store (for store instructions)
+    bool memRead;        // True if next stage must read from memory (e.g. load)
+    bool memWrite;       // True if next stage must write to memory (e.g. store)
+    bool regWrite;       // True if result must be written back to register file
+    string op;           // Operation string (for debugging)
+    char inst_type;      // To pass along the instruction type if needed
+};
+
+// Make an instance of the EX_MEM register globally (or as a member variable)
+EX_MEM_reg ex_mem;
+
+// Execute Stage
+void EX() {
+    cout << "EX ;";
+    // cout << "\n===== Execute (EX) Stage =====" << endl;
+    
+    // Local variables for ALU computation and control signals.
+    uint32_t aluResult = 0;
+    uint32_t storeData = 0; // For S-type (store) instructions
+    bool memRead = false;
+    bool memWrite = false;
+    bool regWrite = false;
+    
+    // Set the EX_MEM register's instruction type for use in later stages
+    ex_mem.inst_type = inst_type;
+    
+    // Execute based on the instruction type decoded in ID stage:
+    switch(inst_type) {
+        case 'R': {
+            // cout << "R-type Instruction Execution: " << r_type_ID_EX_reg.op << endl;
+            // Get source register values from our register set
+            int rs1_val = reg_set[r_type_ID_EX_reg.rs1];
+            int rs2_val = reg_set[r_type_ID_EX_reg.rs2];
+            string op = r_type_ID_EX_reg.op;
+            // Perform ALU operation based on op string
+            if(op == "add")        aluResult = rs1_val + rs2_val;
+            else if(op == "sub")   aluResult = rs1_val - rs2_val;
+            else if(op == "sll")   aluResult = rs1_val << (rs2_val & 0x1F);
+            else if(op == "slt")   aluResult = (rs1_val < rs2_val) ? 1 : 0;
+            else if(op == "sltu")  aluResult = ((unsigned)rs1_val < (unsigned)rs2_val) ? 1 : 0;
+            else if(op == "xor")   aluResult = rs1_val ^ rs2_val;
+            else if(op == "srl")   aluResult = ((unsigned)rs1_val) >> (rs2_val & 0x1F);
+            else if(op == "sra")   aluResult = rs1_val >> (rs2_val & 0x1F);
+            else if(op == "or")    aluResult = rs1_val | rs2_val;
+            else if(op == "and")   aluResult = rs1_val & rs2_val;
+            // For multiplication and division operations (M-extension):
+            else if(op == "mul")   aluResult = rs1_val * rs2_val;
+            // For mulh, mulhsu, etc., you might need wider data types.
+            else {
+                // cout << "Operation " << op << " not fully implemented." << endl;
+                aluResult = 0;
+            }
+            regWrite = true;
+            ex_mem.rd = r_type_ID_EX_reg.rd;
+            // reg_set[r_type_ID_EX_reg.rd] = aluResult;
+            break;
+        }
+        case 'I': {
+            // cout << "I-type Instruction Execution: " << i_type_ID_EX_reg.op << endl;
+            int rs1_val = reg_set[i_type_ID_EX_reg.rs1];
+            int imm_val = i_type_ID_EX_reg.imm; // Already sign-extended in ID stage
+            string op = i_type_ID_EX_reg.op;
+            if(op == "addi")       aluResult = rs1_val + imm_val;
+            else if(op == "slli")  aluResult = rs1_val << (imm_val & 0x1F);
+            else if(op == "slti")  aluResult = (rs1_val < imm_val) ? 1 : 0;
+            else if(op == "sltiu") aluResult = ((unsigned)rs1_val < (unsigned)imm_val) ? 1 : 0;
+            else if(op == "xori")  aluResult = rs1_val ^ imm_val;
+            else if(op == "srli")  aluResult = ((unsigned)rs1_val) >> (imm_val & 0x1F);
+            else if(op == "srai")  aluResult = rs1_val >> (imm_val & 0x1F);
+            else if(op == "ori")   aluResult = rs1_val | imm_val;
+            else if(op == "andi")  aluResult = rs1_val & imm_val;
+            else {
+                // cout << "Operation " << op << " not fully implemented." << endl;
+                aluResult = 0;
+            }
+            regWrite = true;
+            ex_mem.rd = i_type_ID_EX_reg.rd;
+            // reg_set[i_type_ID_EX_reg.rd] = aluResult;
+            break;
+        }
+        case 'S': {
+            // cout << "S-type (Store) Instruction Execution: " << stype.op << endl;
+            // Compute effective address: base (rs1) + immediate
+            int rs1_val = reg_set[stype.rs1];
+            int rs2_val = reg_set[stype.rs2];  // Data to store
+            aluResult = rs1_val + stype.imm;     // Effective address
+            storeData = rs2_val;
+            memWrite = true;  // Signal to write to memory
+            regWrite = false; // Stores do not write back to registers
+
+            break;
+        }
+        case 'U': {
+            // cout << "U-type Instruction Execution" << endl;
+            // For LUI (opcode 0110111), load upper immediate
+            // For AUIPC (opcode 0010111), add immediate to PC
+            // Here, we assume LUI: result = imm << 12
+            aluResult = u_type_ID_EX_reg.imm << 12;
+            regWrite = true;
+            ex_mem.rd = u_type_ID_EX_reg.rd;
+            break;
+        }
+        case 'B': {
+            // cout << "B-type (Branch) Instruction Execution" << endl;
+            // Example: Only handling BEQ (funct3 == 0) for demonstration.
+            int rs1_val = reg_set[btype.rs1];
+            int rs2_val = reg_set[btype.rs2];
+            if(btype.funct3 == 0) { // BEQ
+                if(rs1_val == rs2_val) {
+                    aluResult = btype.imm;  // Branch offset
+                    // cout << "Branch condition met. Branch offset: " << btype.imm << endl;
+                } else {
+                    aluResult = 0;
+                    // cout << "Branch condition not met." << endl;
+                }
+            }
+            regWrite = false; // Branches typically don't write to a register
+            break;
+        }
+        case 'J': {
+            // cout << "J-type (Jump) Instruction Execution" << endl;
+            // For JAL, the jump target is computed by adding the immediate to the PC,
+            // and the return address (PC+4) is written back.
+            // Here, we assume the immediate is the jump offset.
+            aluResult = jtype.imm; 
+            regWrite = true;
+            ex_mem.rd = jtype.rd;
+            break;
+        }
+        default:
+            // cout << "ERROR: Invalid Instruction Type in Execution Stage" << endl;
+            break;
+    }
+    
+    // Fill in the EX_MEM register with our computed values and control signals.
+    ex_mem.aluResult = aluResult;
+    ex_mem.storeData = storeData;
+    ex_mem.memRead = false;  // Set this as needed (for example, if you add a load instruction)
+    ex_mem.memWrite = memWrite;
+    ex_mem.regWrite = regWrite;
+    // Pass the op string for debugging purposes.
+    switch(inst_type) {
+        case 'R': ex_mem.op = r_type_ID_EX_reg.op; break;
+        case 'I': ex_mem.op = i_type_ID_EX_reg.op; break;
+        case 'S': ex_mem.op = stype.op; break;
+        default:  ex_mem.op = "";
+    }
+    
+    // Print the results of the EX stage for debugging.
+    // cout << "EX Stage Result:" << endl;
+    // cout << "  ALU Result: " << ex_mem.aluResult << endl;
+    // if(inst_type == 'S')
+        // cout << "  Store Data: " << ex_mem.storeData << endl;
+    // cout << "  Destination Register (rd): " << ex_mem.rd << endl;
+    // cout << "  Control Signals:" << endl;
+    // cout << "    MemRead:  " << ex_mem.memRead << endl;
+    // cout << "    MemWrite: " << ex_mem.memWrite << endl;
+    // cout << "    RegWrite: " << ex_mem.regWrite << endl;
+    
+    // At this point, you would pass the EX_MEM register to your MEM stage.
+}
+// Pipeline Stage Register for MEM/WB stage
+struct MEM_WB_reg {
+    uint32_t memData;   // Data read from memory (for load instructions)
+    uint32_t aluResult; // ALU result forwarded from EX stage
+    uint32_t rd;        // Destination register number
+    bool regWrite;      // True if WB should update a register
+    bool memToReg;      // True if the value to write back comes from memory
+};
+
+// Global (or member) instance of the MEM/WB pipeline register
+MEM_WB_reg mem_wb;
+
+// Assume you have a data memory array defined somewhere, e.g.:
+// vector<uint32_t> dmem(1000, 0); // Data memory with 1000 32-bit words
+
+// Memory Stage Function
+void MEM() {
+    cout << "MEM ;";
+    // cout << "\n===== Memory (MEM) Stage =====" << endl;
+
+    // For load instructions, we need to read from memory.
+    // For store instructions, we need to write to memory.
+    // The effective address is held in ex_mem.aluResult.
+    
+    // Check for store instruction (memory write)
+    if (ex_mem.memWrite) {
+        // For simplicity, we assume the address is a valid index in our dmem vector.
+        if (ex_mem.aluResult < dmem.size()) {
+            dmem[ex_mem.aluResult] = ex_mem.storeData;
+            // cout << "Memory Write: Address " << ex_mem.aluResult  << " <- " << ex_mem.storeData << endl;
+        } else {
+            cerr << "ERROR: Memory write address out of bounds." << endl;
+        }
+    }
+    
+    // Check for load instruction (memory read)
+    if (ex_mem.memRead) {
+        if (ex_mem.aluResult < dmem.size()) {
+            mem_wb.memData = dmem[ex_mem.aluResult];
+            // cout << "Memory Read: Address " << ex_mem.aluResult  << " -> " << mem_wb.memData << endl;
+        } else {
+            cerr << "ERROR: Memory read address out of bounds." << endl;
+            mem_wb.memData = 0;
+        }
+    } else {
+        // For non-load instructions, this field is not used.
+        mem_wb.memData = 0;
+    }
+    
+    // Regardless of memory access, forward the ALU result.
+    mem_wb.aluResult = ex_mem.aluResult;
+    mem_wb.rd = ex_mem.rd;
+    mem_wb.regWrite = ex_mem.regWrite;
+    
+    // Control signal: if it's a load instruction, we need to write the memory data back.
+    mem_wb.memToReg = ex_mem.memRead;
+    
+    // Print the results from MEM stage for debugging
+    // cout << "MEM Stage Completed:" << endl;
+    // cout << "  Destination Register (rd): x" << mem_wb.rd << endl;
+    // cout << "  ALU Result: " << mem_wb.aluResult << endl;
+    // if (ex_mem.memRead)
+        // cout << "  Data Loaded from Memory: " << mem_wb.memData << endl;
+    // cout << "  RegWrite Signal: " << mem_wb.regWrite << endl;
+    // cout << "  MemToReg Signal: " << mem_wb.memToReg << endl;
+    
+    // The MEM_WB pipeline register (mem_wb) is now ready to be used by the WB stage.
+}
+
+void WB() {
+    cout << "WB ;";
+    // cout << "\n===== Write Back (WB) Stage =====" << endl;
+    
+    // Check if this instruction is supposed to write to a register.
+    if(mem_wb.regWrite) {
+        // Select the data to be written back.
+        // If memToReg is true, the data comes from memory (load instruction);
+        // otherwise, it comes from the ALU (R-, I-, U-type, etc.).
+        uint32_t writeData = mem_wb.memToReg ? mem_wb.memData : mem_wb.aluResult;
+        
+        // Write the result to the destination register.
+        reg_set[mem_wb.rd] = writeData;
+        // cout << "WB Stage: Writing " << writeData << " to register x" << mem_wb.rd << endl;
+    } else {
+        // cout << "WB Stage: No register write-back required." << endl;
+    }
+}
+
+    // Debug method to print register contents
+    void printRegisters() {
+        // cout << "\n===== Register Contents =====" << endl;
+        for (int i = 0; i < 32; ++i) {
+            // cout << "x" << i << ": " << reg_set[i] << endl;
         }
     }
 };
 
-int main(){
-    ifstream file("ass_inst.txt");
+int main() {
+    // Input file handling
+    ifstream file("inp1.txt");
+    ifstream file2("inp2.txt");
+    vector<string>inst;
     vector<string> lines;
     string line;
+    
     if (!file) {
-        cerr << "No input file taken\n";
+        cerr << "ERROR: No input file found" << endl;
         return 1;
     }
+
+    // Read input file
     while (getline(file, line)) {
         lines.push_back(line);
-    }
+    }     
     file.close();
+    while (getline(file2, line)) {
+        inst.push_back(line);
+    }  
 
-    // Convert hexadecimal instructions to binary strings.
-    int n = lines.size();
-    vector<string> binary_mc(n);
-    for (int i = 0; i < n; i++) {
+    // Hex to binary conversion
+    vector<string> binary_mc(lines.size());
+    for (size_t i = 0; i < lines.size(); ++i) {
         ostringstream oss;
         for (char c : lines[i]) {
             if (c != ' ' && c != '\n' && c != '\t' && c != '\0')
                 oss << hex_to_bin(c);
         }
         binary_mc[i] = oss.str();
-        cout << "Instruction " << i << ": " << lines[i] << " -> " << binary_mc[i] << endl;
+        
+        // Print each converted binary instruction
+        // cout << "Binary Machine Code " << i + 1 << ": " << binary_mc[i] << endl;
     }
+
+    // Processor simulation
+    Processor processor;
     
-    Processor proc;
-    proc.run(binary_mc);
+    // Simulate pipeline stages for each instruction
+    for (size_t pc = 1; pc <= binary_mc.size(); ++pc) {
+        // cout << "\n########## Processing Instruction " << pc << " ##########" << endl;
+        cout << inst[pc-1] << ";"; 
+        Processor::IF_ID_reg if_id_reg;
+        processor.IF(if_id_reg, pc, binary_mc);
+        processor.ID(if_id_reg);
+        processor.EX();
+        processor.MEM();
+        processor.WB();
+        cout << '\n';
+
+        // processor.printRegisters();
+    }
+
     return 0;
 }
