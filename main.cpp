@@ -4,6 +4,9 @@
 
 using namespace std;
 vector<uint32_t> dmem(1000, 0);
+vector<int32_t> reg_set(32,0); // set of 32 registers x0 - x31
+vector<bool>busy_reg(32,false);
+string ans = "";
 
 // Utility functions
 uint32_t binToUint(const std::string &binStr) {
@@ -39,7 +42,6 @@ string hex_to_bin(char c) {
 class Processor {
 public:
     int pc = 0; // program counter
-    vector<int32_t> reg_set; // set of 32 registers x0 - x31
     
     // Pipeline Stage Registers
     struct IF_ID_reg {
@@ -137,9 +139,7 @@ public:
 
 public:
     // Constructor to initialize register set
-    Processor() : reg_set(32, 0) {
-        // All registers set to 0 initially
-    }
+
 
     // Instruction Fetch Stage
     void IF(IF_ID_reg &if_id, int cur_pc, const vector<string>& bin_inst) {
@@ -188,7 +188,13 @@ public:
             if(f7 == 0  && f3 == 6) op = "or";
             if(f7 == 0  && f3 == 7) op = "and";
             if(f7 == 1  && f3 == 0) op = "mul";
-            // ... etc. (not all M-extension ops shown here)
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 1)op = "mulh";
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 2)op = "mulhsu";
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 3)op = "mulhu";
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 4)op = "div";
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 5)op = "divu";
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 6)op = "rem";
+            if(r_type_ID_EX_reg.funct7 == 1 && r_type_ID_EX_reg.funct3 == 7)op = "remu";
 
             // For hazard detection
             currentRs1 = r_type_ID_EX_reg.rs1;
@@ -457,13 +463,17 @@ bool detectHazard(uint32_t curRs1, uint32_t curRs2,
 }
 
 int main() {
+    int spaces = 0;
+    
     ifstream file("inp1.txt");
-    if(!file ) {
+    ifstream file2("inp2.txt");
+    if(!file || !file2) {
         cerr << "ERROR: Could not open input file(s)\n";
         return 1;
     }
 
     vector<string> lines;  // to store the hex instructions (one per line)
+    vector<string> risc_inst;
     string line;
     
     // Read assembly lines
@@ -471,7 +481,9 @@ int main() {
         lines.push_back(line);
     }
     file.close();
-
+    while (getline(file2,line)){
+        risc_inst.push_back(line);
+    }
     // Read machine code lines
 
 
@@ -494,14 +506,20 @@ int main() {
     bool     prevRegWrite = false;
 
     // Simulate each instruction in a naive pipeline manner
-    for (size_t pc = 1; pc <= binary_mc.size(); ++pc) {
+    for (size_t pc = 1; pc <= binary_mc.size(); ++pc) { // limit might be something different
+        cout << risc_inst[pc - 1] << " ;" ;
+
         // 1) IF
+        ans = "";
+        for(int i = 0;i<spaces; i++)cout<<" ;";
+        ans += "IF ;";
         Processor::IF_ID_reg if_id_reg;
         processor.IF(if_id_reg, pc, binary_mc);
 
         // 2) ID
         processor.ID(if_id_reg);
-
+        ans += "ID ;";
+        spaces += 1; /**** Here, actual number to be added is the number of stage of ID */
         // Check for hazard with the previous instruction
         bool stall = detectHazard(processor.currentRs1,
                                   processor.currentRs2,
@@ -510,23 +528,37 @@ int main() {
 
         // Print the pipeline stages for this instruction
         // If stall == true, we insert one stall cycle after ID
-        cout << lines[pc - 1] << "; IF ; ID ; ";
-        if (stall) {
-            cout << "- ; ";  // stall
-        }
-        cout << "EX ; MEM ; WB\n";
+        // if (stall) {
+        //     ans += "- ;";  // stall 
+        // }
 
         // Even though we show the stall in the text, we still run the stages below.
         // (A real pipeline would shift them by one cycle.)
 
         // 3) EX
         processor.EX();
+        // if (stall) {
+        //     ans += "- ;";  // stall 
+        // }
+        // else
+        ans += "EX ;";
         // 4) MEM
         processor.MEM();
+        // if (stall) {
+        //     ans += "- ;";  // stall 
+        // }
+        // else
+        ans += "MEM ;";
         // 5) WB
         processor.WB();
+        // if (stall) {
+        //     ans += "- ;";  // stall 
+        // }
+        // else
+        ans += "WB ;";
 
         // Update previous instruction info
+        cout << ans <<'\n';
         prevRd        = processor.ex_mem.rd;      // from EX stage register
         prevRegWrite  = processor.ex_mem.regWrite;
     }
