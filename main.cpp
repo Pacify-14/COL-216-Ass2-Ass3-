@@ -148,6 +148,7 @@ public:
             r_type_ID_EX_reg.rd = binToUint(if_id.out.substr(20, 5));
             r_type_ID_EX_reg.opcode = binToUint(opcode);
             string* op = &r_type_ID_EX_reg.op;
+            
             if(r_type_ID_EX_reg.funct7 == 32 && r_type_ID_EX_reg.funct3 == 0)*op = "sub";
             if(r_type_ID_EX_reg.funct7 == 0 && r_type_ID_EX_reg.funct3 == 0)*op = "add";
             if(r_type_ID_EX_reg.funct7 == 0 && r_type_ID_EX_reg.funct3 == 1)*op = "sll";
@@ -292,44 +293,170 @@ public:
     }
 
     // Execute Stage
-    void EX() {
-        cout << "\n===== Execute (EX) Stage =====" << endl;
-        
-        switch(inst_type) {
-            case 'R': {
-                cout << "R-type Instruction Execution" << endl;
-                // Placeholder for R-type instruction execution logic
-                break;
+    // Pipeline Stage Register for EX/MEM stage
+struct EX_MEM_reg {
+    uint32_t aluResult;  // Result of ALU computation
+    uint32_t rd;         // Destination register (if applicable)
+    uint32_t storeData;  // Data to store (for store instructions)
+    bool memRead;        // True if next stage must read from memory (e.g. load)
+    bool memWrite;       // True if next stage must write to memory (e.g. store)
+    bool regWrite;       // True if result must be written back to register file
+    string op;           // Operation string (for debugging)
+    char inst_type;      // To pass along the instruction type if needed
+};
+
+// Make an instance of the EX_MEM register globally (or as a member variable)
+EX_MEM_reg ex_mem;
+
+// Execute Stage
+void EX() {
+    cout << "\n===== Execute (EX) Stage =====" << endl;
+    
+    // Local variables for ALU computation and control signals.
+    uint32_t aluResult = 0;
+    uint32_t storeData = 0; // For S-type (store) instructions
+    bool memRead = false;
+    bool memWrite = false;
+    bool regWrite = false;
+    
+    // Set the EX_MEM register's instruction type for use in later stages
+    ex_mem.inst_type = inst_type;
+    
+    // Execute based on the instruction type decoded in ID stage:
+    switch(inst_type) {
+        case 'R': {
+            cout << "R-type Instruction Execution: " << r_type_ID_EX_reg.op << endl;
+            // Get source register values from our register set
+            int rs1_val = reg_set[r_type_ID_EX_reg.rs1];
+            int rs2_val = reg_set[r_type_ID_EX_reg.rs2];
+            string op = r_type_ID_EX_reg.op;
+            // Perform ALU operation based on op string
+            if(op == "add")        aluResult = rs1_val + rs2_val;
+            else if(op == "sub")   aluResult = rs1_val - rs2_val;
+            else if(op == "sll")   aluResult = rs1_val << (rs2_val & 0x1F);
+            else if(op == "slt")   aluResult = (rs1_val < rs2_val) ? 1 : 0;
+            else if(op == "sltu")  aluResult = ((unsigned)rs1_val < (unsigned)rs2_val) ? 1 : 0;
+            else if(op == "xor")   aluResult = rs1_val ^ rs2_val;
+            else if(op == "srl")   aluResult = ((unsigned)rs1_val) >> (rs2_val & 0x1F);
+            else if(op == "sra")   aluResult = rs1_val >> (rs2_val & 0x1F);
+            else if(op == "or")    aluResult = rs1_val | rs2_val;
+            else if(op == "and")   aluResult = rs1_val & rs2_val;
+            // For multiplication and division operations (M-extension):
+            else if(op == "mul")   aluResult = rs1_val * rs2_val;
+            // For mulh, mulhsu, etc., you might need wider data types.
+            else {
+                cout << "Operation " << op << " not fully implemented." << endl;
+                aluResult = 0;
             }
-            case 'I': {
-                cout << "I-type Instruction Execution" << endl;
-                // Placeholder for I-type instruction execution logic
-                break;
-            }
-            case 'S': {
-                cout << "S-type Instruction Execution" << endl;
-                // Placeholder for S-type instruction execution logic
-                break;
-            }
-            case 'U': {
-                cout << "U-type Instruction Execution" << endl;
-                // Placeholder for U-type instruction execution logic
-                break;
-            }
-            case 'B': {
-                cout << "B-type Instruction Execution" << endl;
-                // Placeholder for B-type instruction execution logic
-                break;
-            }
-            case 'J': {
-                cout << "J-type Instruction Execution" << endl;
-                // Placeholder for J-type instruction execution logic
-                break;
-            }
-            default:
-                cout << "ERROR: Invalid Instruction Type in Execution Stage" << endl;
+            regWrite = true;
+            ex_mem.rd = r_type_ID_EX_reg.rd;
+            // reg_set[r_type_ID_EX_reg.rd] = aluResult;
+            break;
         }
+        case 'I': {
+            cout << "I-type Instruction Execution: " << i_type_ID_EX_reg.op << endl;
+            int rs1_val = reg_set[i_type_ID_EX_reg.rs1];
+            int imm_val = i_type_ID_EX_reg.imm; // Already sign-extended in ID stage
+            string op = i_type_ID_EX_reg.op;
+            if(op == "addi")       aluResult = rs1_val + imm_val;
+            else if(op == "slli")  aluResult = rs1_val << (imm_val & 0x1F);
+            else if(op == "slti")  aluResult = (rs1_val < imm_val) ? 1 : 0;
+            else if(op == "sltiu") aluResult = ((unsigned)rs1_val < (unsigned)imm_val) ? 1 : 0;
+            else if(op == "xori")  aluResult = rs1_val ^ imm_val;
+            else if(op == "srli")  aluResult = ((unsigned)rs1_val) >> (imm_val & 0x1F);
+            else if(op == "srai")  aluResult = rs1_val >> (imm_val & 0x1F);
+            else if(op == "ori")   aluResult = rs1_val | imm_val;
+            else if(op == "andi")  aluResult = rs1_val & imm_val;
+            else {
+                cout << "Operation " << op << " not fully implemented." << endl;
+                aluResult = 0;
+            }
+            regWrite = true;
+            ex_mem.rd = i_type_ID_EX_reg.rd;
+            // reg_set[i_type_ID_EX_reg.rd] = aluResult;
+            break;
+        }
+        case 'S': {
+            cout << "S-type (Store) Instruction Execution: " << stype.op << endl;
+            // Compute effective address: base (rs1) + immediate
+            int rs1_val = reg_set[stype.rs1];
+            int rs2_val = reg_set[stype.rs2];  // Data to store
+            aluResult = rs1_val + stype.imm;     // Effective address
+            storeData = rs2_val;
+            memWrite = true;  // Signal to write to memory
+            regWrite = false; // Stores do not write back to registers
+
+            break;
+        }
+        case 'U': {
+            cout << "U-type Instruction Execution" << endl;
+            // For LUI (opcode 0110111), load upper immediate
+            // For AUIPC (opcode 0010111), add immediate to PC
+            // Here, we assume LUI: result = imm << 12
+            aluResult = u_type_ID_EX_reg.imm << 12;
+            regWrite = true;
+            ex_mem.rd = u_type_ID_EX_reg.rd;
+            break;
+        }
+        case 'B': {
+            cout << "B-type (Branch) Instruction Execution" << endl;
+            // Example: Only handling BEQ (funct3 == 0) for demonstration.
+            int rs1_val = reg_set[btype.rs1];
+            int rs2_val = reg_set[btype.rs2];
+            if(btype.funct3 == 0) { // BEQ
+                if(rs1_val == rs2_val) {
+                    aluResult = btype.imm;  // Branch offset
+                    cout << "Branch condition met. Branch offset: " << btype.imm << endl;
+                } else {
+                    aluResult = 0;
+                    cout << "Branch condition not met." << endl;
+                }
+            }
+            regWrite = false; // Branches typically don't write to a register
+            break;
+        }
+        case 'J': {
+            cout << "J-type (Jump) Instruction Execution" << endl;
+            // For JAL, the jump target is computed by adding the immediate to the PC,
+            // and the return address (PC+4) is written back.
+            // Here, we assume the immediate is the jump offset.
+            aluResult = jtype.imm; 
+            regWrite = true;
+            ex_mem.rd = jtype.rd;
+            break;
+        }
+        default:
+            cout << "ERROR: Invalid Instruction Type in Execution Stage" << endl;
+            break;
     }
+    
+    // Fill in the EX_MEM register with our computed values and control signals.
+    ex_mem.aluResult = aluResult;
+    ex_mem.storeData = storeData;
+    ex_mem.memRead = false;  // Set this as needed (for example, if you add a load instruction)
+    ex_mem.memWrite = memWrite;
+    ex_mem.regWrite = regWrite;
+    // Pass the op string for debugging purposes.
+    switch(inst_type) {
+        case 'R': ex_mem.op = r_type_ID_EX_reg.op; break;
+        case 'I': ex_mem.op = i_type_ID_EX_reg.op; break;
+        case 'S': ex_mem.op = stype.op; break;
+        default:  ex_mem.op = "";
+    }
+    
+    // Print the results of the EX stage for debugging.
+    cout << "EX Stage Result:" << endl;
+    cout << "  ALU Result: " << ex_mem.aluResult << endl;
+    if(inst_type == 'S')
+        cout << "  Store Data: " << ex_mem.storeData << endl;
+    cout << "  Destination Register (rd): " << ex_mem.rd << endl;
+    cout << "  Control Signals:" << endl;
+    cout << "    MemRead:  " << ex_mem.memRead << endl;
+    cout << "    MemWrite: " << ex_mem.memWrite << endl;
+    cout << "    RegWrite: " << ex_mem.regWrite << endl;
+    
+    // At this point, you would pass the EX_MEM register to your MEM stage.
+}
 
     // Debug method to print register contents
     void printRegisters() {
