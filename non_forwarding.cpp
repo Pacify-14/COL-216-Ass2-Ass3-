@@ -538,31 +538,29 @@ int main(int argc, char* argv[]) {
     
          string input_dir = argv[1]; // Directory containing input files
     int cycleCount = stoi(argv[2]); // Convert cyclecount argument to an integer
-
     string file1_path = input_dir + "/inp1.txt";
-    string file2_path = input_dir + "/inp2.txt";
 
+    ifstream file(file1_path);
+    if (!file) {
+        cerr << "ERROR: Could not open input file\n";
+        return 1;
+    }
 
-	ifstream file(file1_path);
-    ifstream file2(file2_path);
-	if(!file || !file2) {
-		cerr << "ERROR: Could not open input file(s)\n";
-		return 1;
-	}
+    vector<string> lines;       // To store hex instructions
+    vector<string> risc_inst;   // To store RISC-V instructions
+    string line, hex_part, inst_part;
 
-	vector<string> lines;  // to store the hex instructions (one per line)
-	vector<string> risc_inst;
-	string line;
+    // Read the file and split lines into two columns
+    while (getline(file, line)) {
+        istringstream iss(line);
+        if (!(iss >> hex_part)) continue;  // Read hex part
+        iss >> ws; 
+        getline(iss, inst_part);           // Read the rest as instruction
+        lines.push_back(hex_part);
+        risc_inst.push_back(inst_part);
+    }
 
-	// Read assembly lines
-	while (getline(file, line)) {
-		lines.push_back(line);
-	}
-	file.close();
-	while (getline(file2,line)){
-		risc_inst.push_back(line);
-	}
-	// Read machine code lines
+    file.close();
 
 	// Convert hex to 32-bit binary
 	vector<string> binary_mc(lines.size());
