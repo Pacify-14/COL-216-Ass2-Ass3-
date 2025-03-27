@@ -9,6 +9,11 @@ int clock_cycle = 0;
 int prev_IF = 0;
 int spaces = 0;
 bool stall = false;
+void printRegisters() {
+    for (int i = 0; i < 32; ++i) {
+        cout << "x" << i << ": " << reg_set[i] << endl;
+    }
+}
 
 // Utility functions
 uint32_t binToUint(const std::string &binStr) {
@@ -214,7 +219,31 @@ public:
             currentRd  = r_type_ID_EX_reg.rd;
             currentRegWrite = true;  // R-type writes a register
         }
-        else if (opcode == "0010011" || opcode == "0000011" ||
+        else if (opcode == "0000011") {
+            // L-type (Load instructions)
+            inst_type = 'L';
+            cout << "L type detected \n";
+            l_type_ID_EX_reg.imm    = signExtend32(binToUint(if_id.out.substr(0, 12)), 12);
+            l_type_ID_EX_reg.rs1    = binToUint(if_id.out.substr(12, 5));
+            l_type_ID_EX_reg.funct3 = binToUint(if_id.out.substr(17, 3));
+            l_type_ID_EX_reg.rd     = binToUint(if_id.out.substr(20, 5));
+            l_type_ID_EX_reg.opcode = binToUint(opcode);
+    
+            // Identify the load instruction
+            string &op = l_type_ID_EX_reg.op;
+            uint32_t f3 = l_type_ID_EX_reg.funct3;
+            if (f3 == 0) op = "lb";
+            if (f3 == 1) op = "lh";
+            if (f3 == 2) op = "lw";
+            if (f3 == 4) op = "lbu";
+            if (f3 == 5) op = "lhu";
+    
+            // Load instructions read rs1 and write to rd
+            currentRs1 = l_type_ID_EX_reg.rs1;
+            currentRd  = l_type_ID_EX_reg.rd;
+            currentRegWrite = true;  // Load writes to a register
+        }
+        else if (opcode == "0010011"  ||
                  opcode == "1100111" || opcode == "1110011") {
             // I-type
             inst_type = 'I';
@@ -312,29 +341,7 @@ public:
             currentRd  = jtype.rd;
             currentRegWrite = true;  // JAL writes return addr to rd
         }
-        else if (opcode == "0000011") {
-            // L-type (Load instructions)
-            inst_type = 'L';
-            l_type_ID_EX_reg.imm    = signExtend32(binToUint(if_id.out.substr(0, 12)), 12);
-            l_type_ID_EX_reg.rs1    = binToUint(if_id.out.substr(12, 5));
-            l_type_ID_EX_reg.funct3 = binToUint(if_id.out.substr(17, 3));
-            l_type_ID_EX_reg.rd     = binToUint(if_id.out.substr(20, 5));
-            l_type_ID_EX_reg.opcode = binToUint(opcode);
-    
-            // Identify the load instruction
-            string &op = l_type_ID_EX_reg.op;
-            uint32_t f3 = l_type_ID_EX_reg.funct3;
-            if (f3 == 0) op = "lb";
-            if (f3 == 1) op = "lh";
-            if (f3 == 2) op = "lw";
-            if (f3 == 4) op = "lbu";
-            if (f3 == 5) op = "lhu";
-    
-            // Load instructions read rs1 and write to rd
-            currentRs1 = l_type_ID_EX_reg.rs1;
-            currentRd  = l_type_ID_EX_reg.rd;
-            currentRegWrite = true;  // Load writes to a register
-        }
+
         else {
             // Unknown instruction
             inst_type = 'X';
@@ -355,6 +362,7 @@ public:
             case 'R': {
                 int rs1_val = reg_set[r_type_ID_EX_reg.rs1];
                 int rs2_val = reg_set[r_type_ID_EX_reg.rs2];
+
                 // string op   = r_type_ID_EX_reg.op;
                 // if(op == "add")       aluResult = rs1_val + rs2_val;
                 // else if(op == "sub")  aluResult = rs1_val - rs2_val;
@@ -372,8 +380,10 @@ public:
                 regWrite = true;
                 ex_mem.rd = r_type_ID_EX_reg.rd;
                 ex_mem.op = r_type_ID_EX_reg.op;
+                reg_set[ex_mem.rd] = spaces;
                 if (spaces <= t_m) {stall = true; return ;}
                 else {stall = false;return;}
+
                 // break;
             }
             case 'I': {
@@ -393,20 +403,25 @@ public:
                 regWrite = true;
                 ex_mem.rd = i_type_ID_EX_reg.rd;
                 ex_mem.op = i_type_ID_EX_reg.op;
+                reg_set[ex_mem.rd] = spaces;
+
                 if (spaces > t_m){stall = false;return;}
+
                 else {stall = true;return ;}
                 // break;
             }
             case 'L': {
+                cout << "L type EXE detected\n";
                 /*  inst_type = 'L';
             l_type_ID_EX_reg.imm    = signExtend32(binToUint(if_id.out.substr(0, 12)), 12);
             l_type_ID_EX_reg.rs1    = binToUint(if_id.out.substr(12, 5));
             l_type_ID_EX_reg.funct3 = binToUint(if_id.out.substr(17, 3));
             l_type_ID_EX_reg.rd     = binToUint(if_id.out.substr(20, 5));
-            l_type_ID_EX_reg.opcode = binToUint(opcode);
+            l_type_ID_EX_reg.opcode = binToUint(opcode); 
     */
                 int t_m = reg_set[l_type_ID_EX_reg.rs1];
                 if(t_m > spaces){stall = true;return;}
+
                 else {stall = false;return ;}
             }
             case 'S': {
@@ -416,6 +431,7 @@ public:
                 // storeData = rs2_val;
                 memWrite  = true;
                 regWrite  = false; // store does not write a register
+                
                 ex_mem.op = stype.op;
                 int t_m = max(rs1_val, rs2_val);
                 if(t_m > spaces){stall = true;return;}
@@ -476,6 +492,7 @@ public:
         }
         // If load, ex_mem.memRead == true => mem_wb.memData = ...
         // but not implemented here.
+        if(inst_type == 'L')                reg_set[l_type_ID_EX_reg.rd] = spaces;
 
         mem_wb.aluResult = ex_mem.aluResult;
         mem_wb.rd        = ex_mem.rd;
@@ -488,9 +505,9 @@ public:
     // Write Back Stage
     void WB() {
         stall = false;
-        if(inst_type == 'R' || 'I' || 'L'){
-            reg_set[mem_wb.rd] = spaces;
-        }
+        // if(inst_type == 'R' || 'I' || 'L'){
+        //     reg_set[mem_wb.rd] = spaces;
+        // }
         // if(mem_wb.regWrite) {
         //     // If memToReg is true => write mem_wb.memData
         //     // else => write mem_wb.aluResult
@@ -503,11 +520,7 @@ public:
     }
 
     // Debug method to print register contents (if desired)
-    void printRegisters() {
-        for (int i = 0; i < 32; ++i) {
-            cout << "x" << i << ": " << reg_set[i] << endl;
-        }
-    }
+
 };
 
 //
@@ -627,7 +640,7 @@ int main() {
 for (size_t i = 1; i <= ans[0].size(); i++)
     cout << setw(6) << i;
 cout << '\n';
-
+printRegisters();
 // Print pipeline stages
 for (size_t i = 0; i < ans.size(); i++) {
     cout << setw(15) << risc_inst[i] << " |";

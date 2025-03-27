@@ -5,8 +5,10 @@
 using namespace std;
 vector<uint32_t> dmem(1000, 0);
 vector<int32_t> reg_set(32,0); // set of 32 registers x0 - x31
-vector<bool>busy_reg(32,false);
-string ans = "";
+int clock_cycle = 0;
+int prev_IF = 0;
+int spaces = 0;
+bool stall = false;
 
 // Utility functions
 uint32_t binToUint(const std::string &binStr) {
@@ -92,6 +94,14 @@ public:
         uint32_t opcode;
         string op;
     };
+    struct L_type_ID_EX_reg {
+        int32_t imm;      // Immediate offset (signed)
+        uint32_t rs1;     // Base register
+        uint32_t funct3;  // Function code to specify load type (e.g., byte, halfword, word)
+        uint32_t rd;      // Destination register
+        uint32_t opcode;  // Opcode for load instructions
+        std::string op;   // Instruction name (e.g., "LW", "LH", "LB")
+    };
     
     struct J_type_ID_EX_reg {
         int32_t imm;
@@ -101,6 +111,7 @@ public:
 
     // Pipeline Stage Registers
     IF_ID_reg if_id;
+    L_type_ID_EX_reg l_type_ID_EX_reg;
     R_type_ID_EX_reg r_type_ID_EX_reg;
     I_type_ID_EX_reg i_type_ID_EX_reg;
     U_type_ID_EX_reg u_type_ID_EX_reg;
@@ -154,6 +165,7 @@ public:
 
     // Instruction Decode Stage
     void ID(IF_ID_reg &if_id) {
+        
         string opcode = if_id.out.substr(25, 7);
         inst_type = 'X'; // default
 
@@ -300,6 +312,29 @@ public:
             currentRd  = jtype.rd;
             currentRegWrite = true;  // JAL writes return addr to rd
         }
+        else if (opcode == "0000011") {
+            // L-type (Load instructions)
+            inst_type = 'L';
+            l_type_ID_EX_reg.imm    = signExtend32(binToUint(if_id.out.substr(0, 12)), 12);
+            l_type_ID_EX_reg.rs1    = binToUint(if_id.out.substr(12, 5));
+            l_type_ID_EX_reg.funct3 = binToUint(if_id.out.substr(17, 3));
+            l_type_ID_EX_reg.rd     = binToUint(if_id.out.substr(20, 5));
+            l_type_ID_EX_reg.opcode = binToUint(opcode);
+    
+            // Identify the load instruction
+            string &op = l_type_ID_EX_reg.op;
+            uint32_t f3 = l_type_ID_EX_reg.funct3;
+            if (f3 == 0) op = "lb";
+            if (f3 == 1) op = "lh";
+            if (f3 == 2) op = "lw";
+            if (f3 == 4) op = "lbu";
+            if (f3 == 5) op = "lhu";
+    
+            // Load instructions read rs1 and write to rd
+            currentRs1 = l_type_ID_EX_reg.rs1;
+            currentRd  = l_type_ID_EX_reg.rd;
+            currentRegWrite = true;  // Load writes to a register
+        }
         else {
             // Unknown instruction
             inst_type = 'X';
@@ -320,56 +355,78 @@ public:
             case 'R': {
                 int rs1_val = reg_set[r_type_ID_EX_reg.rs1];
                 int rs2_val = reg_set[r_type_ID_EX_reg.rs2];
-                string op   = r_type_ID_EX_reg.op;
-                if(op == "add")       aluResult = rs1_val + rs2_val;
-                else if(op == "sub")  aluResult = rs1_val - rs2_val;
-                else if(op == "sll")  aluResult = rs1_val << (rs2_val & 0x1F);
-                else if(op == "slt")  aluResult = (rs1_val < rs2_val) ? 1 : 0;
-                else if(op == "sltu") aluResult = ((unsigned)rs1_val < (unsigned)rs2_val) ? 1 : 0;
-                else if(op == "xor")  aluResult = rs1_val ^ rs2_val;
-                else if(op == "srl")  aluResult = ((unsigned)rs1_val) >> (rs2_val & 0x1F);
-                else if(op == "sra")  aluResult = rs1_val >> (rs2_val & 0x1F);
-                else if(op == "or")   aluResult = rs1_val | rs2_val;
-                else if(op == "and")  aluResult = rs1_val & rs2_val;
-                else if(op == "mul")  aluResult = rs1_val * rs2_val;
-                // etc.
+                // string op   = r_type_ID_EX_reg.op;
+                // if(op == "add")       aluResult = rs1_val + rs2_val;
+                // else if(op == "sub")  aluResult = rs1_val - rs2_val;
+                // else if(op == "sll")  aluResult = rs1_val << (rs2_val & 0x1F);
+                // else if(op == "slt")  aluResult = (rs1_val < rs2_val) ? 1 : 0;
+                // else if(op == "sltu") aluResult = ((unsigned)rs1_val < (unsigned)rs2_val) ? 1 : 0;
+                // else if(op == "xor")  aluResult = rs1_val ^ rs2_val;
+                // else if(op == "srl")  aluResult = ((unsigned)rs1_val) >> (rs2_val & 0x1F);
+                // else if(op == "sra")  aluResult = rs1_val >> (rs2_val & 0x1F);
+                // else if(op == "or")   aluResult = rs1_val | rs2_val;
+                // else if(op == "and")  aluResult = rs1_val & rs2_val;
+                // else if(op == "mul")  aluResult = rs1_val * rs2_val;
+                // // etc.
+                int t_m = max(rs1_val,rs2_val);
                 regWrite = true;
                 ex_mem.rd = r_type_ID_EX_reg.rd;
                 ex_mem.op = r_type_ID_EX_reg.op;
-                break;
+                if (spaces <= t_m) {stall = true; return ;}
+                else {stall = false;return;}
+                // break;
             }
             case 'I': {
-                int rs1_val = reg_set[i_type_ID_EX_reg.rs1];
+                int t_m = reg_set[i_type_ID_EX_reg.rs1];
                 int imm_val = i_type_ID_EX_reg.imm;
                 string op   = i_type_ID_EX_reg.op;
-                if(op == "addi")  aluResult = rs1_val + imm_val;
-                else if(op == "slli") aluResult = rs1_val << (imm_val & 0x1F);
-                else if(op == "slti") aluResult = (rs1_val < imm_val) ? 1 : 0;
-                else if(op == "sltiu")aluResult = ((unsigned)rs1_val < (unsigned)imm_val) ? 1 : 0;
-                else if(op == "xori") aluResult = rs1_val ^ imm_val;
-                else if(op == "srli") aluResult = ((unsigned)rs1_val) >> (imm_val & 0x1F);
-                else if(op == "srai") aluResult = rs1_val >> (imm_val & 0x1F);
-                else if(op == "ori")  aluResult = rs1_val | imm_val;
-                else if(op == "andi") aluResult = rs1_val & imm_val;
+                // if(op == "addi")  aluResult = rs1_val + imm_val;
+                // else if(op == "slli") aluResult = rs1_val << (imm_val & 0x1F);
+                // else if(op == "slti") aluResult = (rs1_val < imm_val) ? 1 : 0;
+                // else if(op == "sltiu")aluResult = ((unsigned)rs1_val < (unsigned)imm_val) ? 1 : 0;
+                // else if(op == "xori") aluResult = rs1_val ^ imm_val;
+                // else if(op == "srli") aluResult = ((unsigned)rs1_val) >> (imm_val & 0x1F);
+                // else if(op == "srai") aluResult = rs1_val >> (imm_val & 0x1F);
+                // else if(op == "ori")  aluResult = rs1_val | imm_val;
+                // else if(op == "andi") aluResult = rs1_val & imm_val;
+                
                 regWrite = true;
                 ex_mem.rd = i_type_ID_EX_reg.rd;
                 ex_mem.op = i_type_ID_EX_reg.op;
-                break;
+                if (spaces > t_m){stall = false;return;}
+                else {stall = true;return ;}
+                // break;
+            }
+            case 'L': {
+                /*  inst_type = 'L';
+            l_type_ID_EX_reg.imm    = signExtend32(binToUint(if_id.out.substr(0, 12)), 12);
+            l_type_ID_EX_reg.rs1    = binToUint(if_id.out.substr(12, 5));
+            l_type_ID_EX_reg.funct3 = binToUint(if_id.out.substr(17, 3));
+            l_type_ID_EX_reg.rd     = binToUint(if_id.out.substr(20, 5));
+            l_type_ID_EX_reg.opcode = binToUint(opcode);
+    */
+                int t_m = reg_set[l_type_ID_EX_reg.rs1];
+                if(t_m > spaces){stall = true;return;}
+                else {stall = false;return ;}
             }
             case 'S': {
                 int rs1_val = reg_set[stype.rs1];
                 int rs2_val = reg_set[stype.rs2];
-                aluResult = rs1_val + stype.imm; // effective address
-                storeData = rs2_val;
+                // aluResult = rs1_val + stype.imm; // effective address
+                // storeData = rs2_val;
                 memWrite  = true;
                 regWrite  = false; // store does not write a register
                 ex_mem.op = stype.op;
-                break;
+                int t_m = max(rs1_val, rs2_val);
+                if(t_m > spaces){stall = true;return;}
+                else {stall = false;return ;}
+                // break;
             }
             case 'U': {
                 // LUI or AUIPC
                 aluResult = (u_type_ID_EX_reg.imm << 12);
                 regWrite = true;
+                stall = false;
                 ex_mem.rd = u_type_ID_EX_reg.rd;
                 break;
             }
@@ -378,11 +435,14 @@ public:
                 // (You can extend for other branches)
                 int rs1_val = reg_set[btype.rs1];
                 int rs2_val = reg_set[btype.rs2];
-                if(btype.funct3 == 0) { // BEQ
-                    // if(rs1_val == rs2_val) { ... }
-                    // etc.
-                }
+                // if(btype.funct3 == 0) { // BEQ
+                //     // if(rs1_val == rs2_val) { ... }
+                //     // etc.
+                // }
                 // Branch does not write registers
+                int t = max(rs1_val,rs2_val);
+                if (spaces > t){stall = false;return ;}
+                else {stall = true; return ;}
                 regWrite = false;
                 break;
             }
@@ -427,15 +487,19 @@ public:
 
     // Write Back Stage
     void WB() {
-        if(mem_wb.regWrite) {
-            // If memToReg is true => write mem_wb.memData
-            // else => write mem_wb.aluResult
-            uint32_t writeData = mem_wb.memToReg ? mem_wb.memData : mem_wb.aluResult;
-            // Don't ever write to x0
-            if (mem_wb.rd != 0) {
-                reg_set[mem_wb.rd] = writeData;
-            }
+        stall = false;
+        if(inst_type == 'R' || 'I' || 'L'){
+            reg_set[mem_wb.rd] = spaces;
         }
+        // if(mem_wb.regWrite) {
+        //     // If memToReg is true => write mem_wb.memData
+        //     // else => write mem_wb.aluResult
+        //     uint32_t writeData = mem_wb.memToReg ? mem_wb.memData : mem_wb.aluResult;
+        //     // Don't ever write to x0
+        //     if (mem_wb.rd != 0) {
+        //         reg_set[mem_wb.rd] = writeData;
+        //     }
+        // }
     }
 
     // Debug method to print register contents (if desired)
@@ -449,21 +513,20 @@ public:
 //
 // Simple hazard detection with the *previous* instruction only.
 //
-bool detectHazard(uint32_t curRs1, uint32_t curRs2,
-                  uint32_t prevRd,  bool prevRegWrite)
-{
-    if (!prevRegWrite) return false;  // previous doesn't write => no hazard
-    if (prevRd == 0)   return false;  // writing to x0 => no hazard
+// bool detectHazard(uint32_t curRs1, uint32_t curRs2,
+//                   uint32_t prevRd,  bool prevRegWrite)
+// {
+//     if (!prevRegWrite) return false;  // previous doesn't write => no hazard
+//     if (prevRd == 0)   return false;  // writing to x0 => no hazard
 
-    // If the current instruction reads rs1 or rs2 = previous's rd => hazard
-    if (curRs1 == prevRd || curRs2 == prevRd)
-        return true;
+//     // If the current instruction reads rs1 or rs2 = previous's rd => hazard
+//     if (curRs1 == prevRd || curRs2 == prevRd)
+//         return true;
 
-    return false;
-}
+//     return false;
+// }
 
 int main() {
-    int spaces = 0;
     
     ifstream file("inp1.txt");
     ifstream file2("inp2.txt");
@@ -507,6 +570,7 @@ int main() {
     // Simulate each instruction in a naive pipeline manner
     vector<vector<int>>ans(risc_inst.size(),vector<int>(20,0)); // 0 -> " ", 1 -> "IF", 2 -> ID, 3 -> EX , 4-> MEM , 5-> WB
     int next_sp = 0;
+
     for (size_t pc = 1; pc <= binary_mc.size(); ++pc) {
         spaces = next_sp;
     
@@ -518,21 +582,26 @@ int main() {
         processor.IF(if_id_reg, pc, binary_mc);
     
         // 2) Instruction Decode (ID)
+        stall = false;
+        while(pc >= 2 && ans[pc-2][spaces] == 6){ans[pc-1][spaces] = 6;spaces++;}
         processor.ID(if_id_reg);
+        while(stall){
+            ans[pc-1][spaces] = 6;
+            spaces++;
+            processor.ID(if_id_reg);
+        }
         next_sp = spaces;
         ans[pc - 1][spaces] = 2;
         spaces++;
     
-        // 3) Hazard Detection
-        bool stall = detectHazard(processor.currentRs1, processor.currentRs2, prevRd, prevRegWrite);
-        
-        if (stall) {
-            ans[pc - 1][spaces] = 6; // Stall cycle
-            spaces++;
-        }
-    
         // 4) Execute (EX) - Ensure it always runs!
+        stall = false;
         processor.EX();
+        while(stall){
+            ans[pc-1][spaces] = 6;
+            spaces++;
+            processor.EX();
+        }
         ans[pc - 1][spaces] = 3;
         spaces++;
     
@@ -544,11 +613,10 @@ int main() {
         // 6) Write Back (WB) - Ensure it always runs!
         processor.WB();
         ans[pc - 1][spaces] = 5;
-        spaces++;
     
         // Update previous instruction info
-        prevRd = processor.ex_mem.rd;
-        prevRegWrite = processor.ex_mem.regWrite;
+        // prevRd = processor.ex_mem.rd;
+        // prevRegWrite = processor.ex_mem.regWrite;
     }
     
     
