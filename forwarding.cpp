@@ -1,6 +1,9 @@
 #include <bits/stdc++.h>
 #include <fstream>
 #include <iomanip> // Include this for setw()
+#include <iostream>
+#include <vector>
+#include <sstream>
 
 using namespace std;
 vector<uint32_t> dmem(1000, 0);
@@ -539,121 +542,131 @@ public:
 //     return false;
 // }
 
-int main() {
+int main(int argc, char* argv[]) {
+
+        if (argc != 3) {
+        cerr << "Usage: " << argv[0] << " <input_directory> <cyclecount>\n";
+        return 1;
+    }
     
-    ifstream file("inp1.txt");
-    ifstream file2("inp2.txt");
-    if(!file || !file2) {
-        cerr << "ERROR: Could not open input file(s)\n";
+         string input_dir = argv[1]; // Directory containing input files
+    int cycleCount = stoi(argv[2]); // Convert cyclecount argument to an integer
+    string file1_path = input_dir + "/inp1.txt";
+
+    ifstream file(file1_path);
+    if (!file) {
+        cerr << "ERROR: Could not open input file\n";
         return 1;
     }
 
-    vector<string> lines;  // to store the hex instructions (one per line)
-    vector<string> risc_inst;
-    string line;
-    
-    // Read assembly lines
+    vector<string> lines;       // To store hex instructions
+    vector<string> risc_inst;   // To store RISC-V instructions
+    string line, hex_part, inst_part;
+
+    // Read the file and split lines into two columns
     while (getline(file, line)) {
-        lines.push_back(line);
+        istringstream iss(line);
+        if (!(iss >> hex_part)) continue;  // Read hex part
+        iss >> ws; 
+        getline(iss, inst_part);           // Read the rest as instruction
+        lines.push_back(hex_part);
+        risc_inst.push_back(inst_part);
     }
+
     file.close();
-    while (getline(file2,line)){
-        risc_inst.push_back(line);
-    }
-    // Read machine code lines
 
-    // Convert hex to 32-bit binary
-    vector<string> binary_mc(lines.size());
-    for (size_t i = 0; i < lines.size(); ++i) {
-        ostringstream oss;
-        for (char c : lines[i]) {
-            if (!isspace((unsigned char)c)) {
-                oss << hex_to_bin(c);
-            }
-        }
-        binary_mc[i] = oss.str();
-    }
+	// Convert hex to 32-bit binary
+	vector<string> binary_mc(lines.size());
+	for (size_t i = 0; i < lines.size(); ++i) {
+		ostringstream oss;
+		for (char c : lines[i]) {
+			if (!isspace((unsigned char)c)) {
+				oss << hex_to_bin(c);
+			}
+		}
+		binary_mc[i] = oss.str();
+	}
 
-    Processor processor;
+	Processor processor;
 
-    // Track previous instruction's destination register + regWrite
-    uint32_t prevRd = 0;
-    bool     prevRegWrite = false;
+	// Track previous instruction's destination register + regWrite
+	uint32_t prevRd = 0;
+	bool     prevRegWrite = false;
 
-    // Simulate each instruction in a naive pipeline manner
-    vector<vector<int>>ans(risc_inst.size(),vector<int>(20,0)); // 0 -> " ", 1 -> "IF", 2 -> ID, 3 -> EX , 4-> MEM , 5-> WB
-    int next_sp = 0;
+	// Simulate each instruction in a naive pipeline manner
+	vector<vector<int>>ans(risc_inst.size(),vector<int>(cycleCount,0)); // 0 -> " ", 1 -> "IF", 2 -> ID, 3 -> EX , 4-> MEM , 5-> WB
+	int next_sp = 0;
 
-    for (size_t pc = 1; pc <= binary_mc.size(); ++pc) {
-        spaces = next_sp;
-    
-        // 1) Instruction Fetch (IF)
-        ans[pc - 1][spaces] = 1;
-        spaces++;
-    
-        Processor::IF_ID_reg if_id_reg;
-        processor.IF(if_id_reg, pc, binary_mc);
-    
-        // 2) Instruction Decode (ID)
-        stall = false;
-        while(pc >= 2 && ans[pc-2][spaces] == 6){ans[pc-1][spaces] = 6;spaces++;}
-        processor.ID(if_id_reg);
-        while(stall){
-            ans[pc-1][spaces] = 6;
-            spaces++;
-            processor.ID(if_id_reg);
-        }
-        next_sp = spaces;
-        ans[pc - 1][spaces] = 2;
-        spaces++;
-    
-        // 4) Execute (EX) - Ensure it always runs!
-        stall = false;
-        processor.EX();
-        while(stall){
-            ans[pc-1][spaces] = 6;
-            spaces++;
-            processor.EX();
-        }
-        ans[pc - 1][spaces] = 3;
-        spaces++;
-    
-        // 5) Memory Access (MEM) - Ensure it always runs!
-        processor.MEM();
-        ans[pc - 1][spaces] = 4;
-        spaces++;
-    
-        // 6) Write Back (WB) - Ensure it always runs!
-        processor.WB();
-        ans[pc - 1][spaces] = 5;
-    
-        // Update previous instruction info
-        // prevRd = processor.ex_mem.rd;
-        // prevRegWrite = processor.ex_mem.regWrite;
-    }
-    
-    
-    // Print column headers
-    
-    cout << setw(15) << "Instruction"; 
-    
-for (size_t i = 1; i <= ans[0].size(); i++)
-    cout << setw(6) << i;
-cout << '\n';
-// printRegisters();
-// Print pipeline stages
-for (size_t i = 0; i < ans.size(); i++) {
-    cout << setw(15) << risc_inst[i] << " |";
-    for (size_t j = 0; j < ans[0].size(); j++) {
-        if (ans[i][j] == 1) cout << setw(6) << "IF";
-        else if (ans[i][j] == 2) cout << setw(6) << "ID";
-        else if (ans[i][j] == 3) cout << setw(6) << "EX";
-        else if (ans[i][j] == 4) cout << setw(6) << "MEM";
-        else if (ans[i][j] == 5) cout << setw(6) << "WB";
-        else if (ans[i][j] == 6) cout << setw(6) << "-";
-        else cout << setw(6) << " ";
-    }
-    cout << '\n';
-}
-    return 0;
+	for (size_t pc = 1; pc <= binary_mc.size(); ++pc) {
+		spaces = next_sp;
+
+		// 1) Instruction Fetch (IF)
+		ans[pc - 1][spaces] = 1;
+		spaces++;
+
+		Processor::IF_ID_reg if_id_reg;
+		processor.IF(if_id_reg, pc, binary_mc);
+
+		// 2) Instruction Decode (ID)
+		stall = false;
+		while(pc >= 2 && ans[pc-2][spaces] == 6){ans[pc-1][spaces] = 6;spaces++;}
+		processor.ID(if_id_reg);
+		while(stall){
+			ans[pc-1][spaces] = 6;
+			spaces++;
+			processor.ID(if_id_reg);
+		}
+		next_sp = spaces;
+		ans[pc - 1][spaces] = 2;
+		spaces++;
+
+		// 4) Execute (EX) - Ensure it always runs!
+		stall = false;
+		processor.EX();
+		while(stall){
+			ans[pc-1][spaces] = 6;
+			spaces++;
+			processor.EX();
+		}
+		ans[pc - 1][spaces] = 3;
+		spaces++;
+
+		// 5) Memory Access (MEM) - Ensure it always runs!
+		processor.MEM();
+		ans[pc - 1][spaces] = 4;
+		spaces++;
+
+		// 6) Write Back (WB) - Ensure it always runs!
+		processor.WB();
+		ans[pc - 1][spaces] = 5;
+
+		// Update previous instruction info
+		// prevRd = processor.ex_mem.rd;
+		// prevRegWrite = processor.ex_mem.regWrite;
+	}
+
+
+	// Print column headers
+
+	cout << setw(15) << "Instruction"; 
+
+	for (size_t i = 1; i <= cycleCount; i++)
+		cout << setw(6) << i;
+	cout << '\n';
+
+	// Print pipeline stages
+	for (size_t i = 0; i < ans.size(); i++) {
+		cout << setw(15) << risc_inst[i] << "|";
+		for (size_t j = 0; j < cycleCount; j++) {
+			if (ans[i][j] == 1) cout << setw(6) << "IF";
+			else if (ans[i][j] == 2) cout << setw(6) << "ID";
+			else if (ans[i][j] == 3) cout << setw(6) << "EX";
+			else if (ans[i][j] == 4) cout << setw(6) << "MEM";
+			else if (ans[i][j] == 5) cout << setw(6) << "WB";
+			else if (ans[i][j] == 6) cout << setw(6) << "-";
+			else cout << setw(6) << " ";
+		}
+		cout << '\n';
+	}
+	return 0;
 }
