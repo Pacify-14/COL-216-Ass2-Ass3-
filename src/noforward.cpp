@@ -7,12 +7,15 @@
 using namespace std;
 namespace fs = std::filesystem;
 
+bool is_jalr = false;
 vector<uint32_t> dmem(1000, 0);
 vector<int32_t> reg_set(32,0); // set of 32 registers x0 - x31
 int clock_cycle = 0;
 int prev_IF = 0;
 int spaces = 0;
 bool stall = false;
+bool is_j = false;
+int jump = 1;
 
 // Utility functions
 uint32_t binToUint(const std::string &binStr) {
@@ -217,6 +220,28 @@ class Processor {
 				currentRs2 = r_type_ID_EX_reg.rs2;
 				currentRd  = r_type_ID_EX_reg.rd;
 				currentRegWrite = true;  // R-type writes a register
+			}else if (opcode == "0000011") {
+				// L-type (Load instructions)
+				inst_type = 'L';
+				l_type_ID_EX_reg.imm    = signExtend32(binToUint(if_id.out.substr(0, 12)), 12);
+				l_type_ID_EX_reg.rs1    = binToUint(if_id.out.substr(12, 5));
+				l_type_ID_EX_reg.funct3 = binToUint(if_id.out.substr(17, 3));
+				l_type_ID_EX_reg.rd     = binToUint(if_id.out.substr(20, 5));
+				l_type_ID_EX_reg.opcode = binToUint(opcode);
+
+				// Identify the load instruction
+				string &op = l_type_ID_EX_reg.op;
+				uint32_t f3 = l_type_ID_EX_reg.funct3;
+				if (f3 == 0) op = "lb";
+				if (f3 == 1) op = "lh";
+				if (f3 == 2) op = "lw";
+				if (f3 == 4) op = "lbu";
+				if (f3 == 5) op = "lhu";
+
+				// Load instructions read rs1 and write to rd
+				currentRs1 = l_type_ID_EX_reg.rs1;
+				currentRd  = l_type_ID_EX_reg.rd;
+				currentRegWrite = true;  // Load writes to a register
 			}
 			else if (opcode == "0010011" || opcode == "0000011" ||
 					opcode == "1100111" || opcode == "1110011") {
@@ -301,7 +326,7 @@ class Processor {
 				currentRegWrite = false;
 			}
 			else if (opcode == "1101111") {
-				// J-type
+				// J-typej
 				inst_type = 'J';
 				uint32_t imm20   = binToUint(if_id.out.substr(0, 1));
 				uint32_t imm10_1 = binToUint(if_id.out.substr(1, 10));
@@ -312,33 +337,17 @@ class Processor {
 				jtype.imm = signExtend32(rawImm, 21);
 				jtype.rd  = binToUint(if_id.out.substr(20, 5));
 				jtype.opcode = binToUint(opcode);
-
+				if (if_id.out.substr(12, 7) == "0000000" && if_id.out.substr(25,7) == "1100111") {
+					is_jalr = true; // it is JALR
+				} else {
+					is_jalr = false; // it is JAL
+				}
 				currentRd  = jtype.rd;
 				currentRegWrite = true;  // JAL writes return addr to rd
+				// cout << "Jump = " << jtype.imm << '\n';
+				jump = jtype.imm / 4;
 			}
-			else if (opcode == "0000011") {
-				// L-type (Load instructions)
-				inst_type = 'L';
-				l_type_ID_EX_reg.imm    = signExtend32(binToUint(if_id.out.substr(0, 12)), 12);
-				l_type_ID_EX_reg.rs1    = binToUint(if_id.out.substr(12, 5));
-				l_type_ID_EX_reg.funct3 = binToUint(if_id.out.substr(17, 3));
-				l_type_ID_EX_reg.rd     = binToUint(if_id.out.substr(20, 5));
-				l_type_ID_EX_reg.opcode = binToUint(opcode);
-
-				// Identify the load instruction
-				string &op = l_type_ID_EX_reg.op;
-				uint32_t f3 = l_type_ID_EX_reg.funct3;
-				if (f3 == 0) op = "lb";
-				if (f3 == 1) op = "lh";
-				if (f3 == 2) op = "lw";
-				if (f3 == 4) op = "lbu";
-				if (f3 == 5) op = "lhu";
-
-				// Load instructions read rs1 and write to rd
-				currentRs1 = l_type_ID_EX_reg.rs1;
-				currentRd  = l_type_ID_EX_reg.rd;
-				currentRegWrite = true;  // Load writes to a register
-			}
+			
 			else {
 				// Unknown instruction
 				inst_type = 'X';
@@ -410,7 +419,7 @@ class Processor {
 						      l_type_ID_EX_reg.opcode = binToUint(opcode);
 						      */
 						  int t_m = reg_set[l_type_ID_EX_reg.rs1];
-						  if(t_m > spaces){stall = true;return;}
+						  if(t_m >= spaces){stall = true;return;}
 						  else {stall = false;return ;}
 					  }
 				case 'S': {
@@ -422,7 +431,7 @@ class Processor {
 						  regWrite  = false; // store does not write a register
 						  ex_mem.op = stype.op;
 						  int t_m = max(rs1_val, rs2_val);
-						  if(t_m > spaces){stall = true;return;}
+						  if(t_m >= spaces){stall = true;return;}
 						  else {stall = false;return ;}
 						  // break;
 					  }
@@ -509,7 +518,7 @@ class Processor {
 		// Debug method to print register contents (if desired)
 		void printRegisters() {
 			for (int i = 0; i < 32; ++i) {
-				cout << "x" << i << ": " << reg_set[i] << endl;
+				// cout << "x" << i << ": " << reg_set[i] << endl;
 			}
 		}
 };
@@ -576,7 +585,7 @@ int main(int argc, char* argv[]) {
         lines.push_back(hex_part);
         risc_inst.push_back(inst_part);
     }
-
+// cout << "risc instruction size " << risc_inst.size() << '\n';
     file.close();
 
 	// Convert hex to 32-bit binary
@@ -598,11 +607,16 @@ int main(int argc, char* argv[]) {
 	bool     prevRegWrite = false;
 
 	// Simulate each instruction in a naive pipeline manner
-	vector<vector<int>>ans(risc_inst.size(),vector<int>(cycleCount,0)); // 0 -> " ", 1 -> "IF", 2 -> ID, 3 -> EX , 4-> MEM , 5-> WB
+	vector<vector<int>>ans(risc_inst.size(),vector<int>(cycleCount * 3,0)); // 0 -> " ", 1 -> "IF", 2 -> ID, 3 -> EX , 4-> MEM , 5-> WB
+	// cout << "ans size : " << ans.size() << '\n';
 	
 	int next_sp = 0;
-
-	for (size_t pc = 1; pc <= binary_mc.size(); ++pc) {
+	size_t pc = 1;
+	int cycle = 1;
+	while (pc <= binary_mc.size() && cycle <= cycleCount) {
+		is_j = false;
+		is_jalr = false;
+		jump = 1;
 		spaces = next_sp;
 
 		// 1) Instruction Fetch (IF)
@@ -616,6 +630,7 @@ int main(int argc, char* argv[]) {
 		stall = false;
 		while(pc >= 2 && ans[pc-2][spaces] == 6){ans[pc-1][spaces] = 6;spaces++;}
 		processor.ID(if_id_reg);
+		if(pc < binary_mc.size())ans[pc][spaces] = 1;
 		while(stall){
 			ans[pc-1][spaces] = 6;
 			spaces++;
@@ -628,6 +643,7 @@ int main(int argc, char* argv[]) {
 		// 4) Execute (EX) - Ensure it always runs!
 		stall = false;
 		processor.EX();
+		if(is_jalr)pc = 1;
 		while(stall){
 			ans[pc-1][spaces] = 6;
 			spaces++;
@@ -648,6 +664,17 @@ int main(int argc, char* argv[]) {
 		// Update previous instruction info
 		// prevRd = processor.ex_mem.rd;
 		// prevRegWrite = processor.ex_mem.regWrite;
+		// cout << "jump = " << jump << '\n';
+    // Update PC: if jump instruction, update accordingly; otherwise, go to next instruction.
+    if (processor.inst_type == 'J') {
+        // For a jump, jump already holds (jtype.imm / 4) relative offset.
+        // Since the current pc corresponds to the jump instruction,
+        // we update it as follows:
+        pc = pc + jump;
+    } else {
+        pc++; // normal sequential execution
+    }
+		cycle++;
 	}
 
 
@@ -663,14 +690,15 @@ int main(int argc, char* argv[]) {
 	// Print pipeline stages
 	for (size_t i = 0; i < ans.size(); i++) {
 		noforwardFile << setw(15) << risc_inst[i] << "|";
+		// cout << "i is : " << i ;
 		for (size_t j = 0; j < cycleCount; j++) {
-			if (ans[i][j] == 1) noforwardFile << setw(6) << "IF";
-			else if (ans[i][j] == 2) noforwardFile << setw(6) << "ID";
-			else if (ans[i][j] == 3) noforwardFile << setw(6) << "EX";
-			else if (ans[i][j] == 4) noforwardFile << setw(6) << "MEM";
-			else if (ans[i][j] == 5) noforwardFile << setw(6) << "WB";
+			if (ans[i][j] == 1) noforwardFile << setw(6) << "IF;";
+			else if (ans[i][j] == 2) noforwardFile << setw(6) << "ID;";
+			else if (ans[i][j] == 3) noforwardFile << setw(6) << "EX;";
+			else if (ans[i][j] == 4) noforwardFile << setw(6) << "MEM;";
+			else if (ans[i][j] == 5) noforwardFile << setw(6) << "WB;";
 			else if (ans[i][j] == 6) noforwardFile << setw(6) << "-;";
-			else noforwardFile << setw(6) << ";";
+			else noforwardFile << setw(6) << " ;";
 		}
 		noforwardFile << '\n';
 	}
