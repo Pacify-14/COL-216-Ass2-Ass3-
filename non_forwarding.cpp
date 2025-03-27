@@ -1,11 +1,12 @@
 #include <bits/stdc++.h>
 #include <fstream>
 #include <iomanip> // Include this for setw()
-#include <iostream>
-#include <vector>
 #include <sstream>
+#include <filesystem> 
 
 using namespace std;
+namespace fs = std::filesystem;
+
 vector<uint32_t> dmem(1000, 0);
 vector<int32_t> reg_set(32,0); // set of 32 registers x0 - x31
 int clock_cycle = 0;
@@ -536,11 +537,27 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
-         string input_dir = argv[1]; // Directory containing input files
+         string inputFile = argv[1]; // Directory containing input files
     int cycleCount = stoi(argv[2]); // Convert cyclecount argument to an integer
-    string file1_path = input_dir + "/inp1.txt";
+    
+    // Extract filename without extension
+    string filename = fs::path(inputFile).stem().string(); 
 
-    ifstream file(file1_path);
+    // Ensure output directory exists
+    string outputDir = "outputfiles/";
+    fs::create_directories(outputDir); 
+
+    // Open output files
+    string noforward_out = outputDir + filename + "_noforward_out.txt";
+    ofstream noforwardFile(noforward_out);
+
+    if (!noforwardFile) {
+        cerr << "ERROR: Could not create output files\n";
+        return 1;
+    }
+    
+    ifstream file(inputFile);
+    
     if (!file) {
         cerr << "ERROR: Could not open input file\n";
         return 1;
@@ -582,6 +599,7 @@ int main(int argc, char* argv[]) {
 
 	// Simulate each instruction in a naive pipeline manner
 	vector<vector<int>>ans(risc_inst.size(),vector<int>(cycleCount,0)); // 0 -> " ", 1 -> "IF", 2 -> ID, 3 -> EX , 4-> MEM , 5-> WB
+	
 	int next_sp = 0;
 
 	for (size_t pc = 1; pc <= binary_mc.size(); ++pc) {
@@ -633,27 +651,31 @@ int main(int argc, char* argv[]) {
 	}
 
 
+        ostream& out = noforwardFile; 
 	// Print column headers
 
-	cout << setw(15) << "Instruction"; 
+	noforwardFile << setw(15) << "Instruction"; 
 
-	for (size_t i = 1; i <= cycleCount; i++)
-		cout << setw(6) << i;
-	cout << '\n';
+	for (size_t i = 0; i <= cycleCount; i++)
+		noforwardFile << setw(6) << i;
+	noforwardFile << '\n';
 
 	// Print pipeline stages
 	for (size_t i = 0; i < ans.size(); i++) {
-		cout << setw(15) << risc_inst[i] << "|";
+		noforwardFile << setw(15) << risc_inst[i] << "|";
 		for (size_t j = 0; j < cycleCount; j++) {
-			if (ans[i][j] == 1) cout << setw(6) << "IF";
-			else if (ans[i][j] == 2) cout << setw(6) << "ID";
-			else if (ans[i][j] == 3) cout << setw(6) << "EX";
-			else if (ans[i][j] == 4) cout << setw(6) << "MEM";
-			else if (ans[i][j] == 5) cout << setw(6) << "WB";
-			else if (ans[i][j] == 6) cout << setw(6) << "-";
-			else cout << setw(6) << " ";
+			if (ans[i][j] == 1) noforwardFile << setw(6) << "IF";
+			else if (ans[i][j] == 2) noforwardFile << setw(6) << "ID";
+			else if (ans[i][j] == 3) noforwardFile << setw(6) << "EX";
+			else if (ans[i][j] == 4) noforwardFile << setw(6) << "MEM";
+			else if (ans[i][j] == 5) noforwardFile << setw(6) << "WB";
+			else if (ans[i][j] == 6) noforwardFile << setw(6) << "-;";
+			else noforwardFile << setw(6) << ";";
 		}
-		cout << '\n';
+		noforwardFile << '\n';
 	}
+	// Close output files
+    noforwardFile.close();
+
 	return 0;
 }
